@@ -18,6 +18,8 @@
 - 不把后续功能混入当前阶段。
 - 测试用例必须符合 `docs/testing-guidelines.md`。
 
+当前执行状态和可勾选任务清单见 `docs/task-checklist.md`。
+
 ## M0：项目骨架与工程基线
 
 ### 目标
