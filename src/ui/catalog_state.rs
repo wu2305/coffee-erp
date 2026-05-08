@@ -1495,4 +1495,105 @@ mod tests {
         };
         assert_eq!(super::can_write_catalog(Some(&pending)), false);
     }
+
+    #[test]
+    fn commit_pending_archive_marks_batch_used_up() {
+        let mut state = seed_app_state();
+        state.batches.push(crate::domain::models::RoastBatch {
+            id: "batch-usedup-test".to_string(),
+            profile_id: "profile-1".to_string(),
+            roasted_at: "2026-05-02T08:00:00Z".to_string(),
+            batch_no: "20260502-TEST-001".to_string(),
+            status: crate::domain::models::BatchStatus::Active,
+            notes: None,
+            capacity_g: 100.0,
+        });
+        let pending = begin_pending_archive(
+            &None,
+            super::ArchiveTarget::BatchUsedUp {
+                id: "batch-usedup-test".to_string(),
+            },
+        )
+        .expect("pending should start");
+
+        commit_pending_archive(&mut state, pending).expect("commit should succeed");
+
+        assert_eq!(
+            state.batches[0].status,
+            crate::domain::models::BatchStatus::UsedUp
+        );
+    }
+
+    #[test]
+    fn commit_pending_archive_marks_batch_archived() {
+        let mut state = seed_app_state();
+        state.batches.push(crate::domain::models::RoastBatch {
+            id: "batch-archive-test".to_string(),
+            profile_id: "profile-1".to_string(),
+            roasted_at: "2026-05-02T08:00:00Z".to_string(),
+            batch_no: "20260502-TEST-002".to_string(),
+            status: crate::domain::models::BatchStatus::Active,
+            notes: None,
+            capacity_g: 100.0,
+        });
+        let pending = begin_pending_archive(
+            &None,
+            super::ArchiveTarget::BatchArchived {
+                id: "batch-archive-test".to_string(),
+            },
+        )
+        .expect("pending should start");
+
+        commit_pending_archive(&mut state, pending).expect("commit should succeed");
+
+        assert_eq!(
+            state.batches[0].status,
+            crate::domain::models::BatchStatus::Archived
+        );
+    }
+
+    #[test]
+    fn can_write_catalog_returns_false_for_batch_used_up_pending() {
+        let pending = super::PendingArchive {
+            target: super::ArchiveTarget::BatchUsedUp {
+                id: "batch-1".to_string(),
+            },
+            remaining_seconds: 5,
+        };
+        assert_eq!(super::can_write_catalog(Some(&pending)), false);
+    }
+
+    #[test]
+    fn pending_archive_label_shows_batch_used_up() {
+        let mut state = seed_app_state();
+        state.batches.push(crate::domain::models::RoastBatch {
+            id: "batch-001".to_string(),
+            profile_id: "profile-1".to_string(),
+            roasted_at: "2026-05-02T08:00:00Z".to_string(),
+            batch_no: "20260502-TEST-001".to_string(),
+            status: crate::domain::models::BatchStatus::Active,
+            notes: None,
+            capacity_g: 100.0,
+        });
+        let pending = super::PendingArchive {
+            target: super::ArchiveTarget::BatchUsedUp {
+                id: "batch-001".to_string(),
+            },
+            remaining_seconds: 5,
+        };
+        let label = super::pending_archive_label(&state, &pending);
+        assert_eq!(label, "标记用完：20260502-TEST-001");
+    }
+
+    #[test]
+    fn pending_archive_initial_remaining_seconds_is_five() {
+        let pending = begin_pending_archive(
+            &None,
+            super::ArchiveTarget::CoffeeBean {
+                id: "bean-1".to_string(),
+            },
+        )
+        .expect("pending should start");
+        assert_eq!(pending.remaining_seconds, 5);
+    }
 }

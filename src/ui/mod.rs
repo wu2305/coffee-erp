@@ -417,6 +417,20 @@ pub(crate) fn read_store_id() -> String {
         .unwrap_or_else(|| "store-default".to_string())
 }
 
+pub(crate) fn map_save_remote_state_error(error: crate::storage::SaveRemoteStateError) -> String {
+    match error {
+        crate::storage::SaveRemoteStateError::RevisionConflict(_) => {
+            "保存失败：版本冲突，请刷新后重试".to_string()
+        }
+        crate::storage::SaveRemoteStateError::Transport(_) => {
+            "保存失败：网络异常，请检查网络连接".to_string()
+        }
+        crate::storage::SaveRemoteStateError::InvalidResponse(msg) => {
+            format!("保存失败：服务器响应异常 ({})", msg)
+        }
+    }
+}
+
 pub(crate) async fn save_app_state(state: &AppState, store_id: &str) -> Result<AppState, String> {
     let base_url = option_env!("PUBLIC_API_BASE_URL").unwrap_or("http://localhost:8787");
     match crate::storage::save_remote_state_wasm(base_url, store_id, state).await {
@@ -424,11 +438,82 @@ pub(crate) async fn save_app_state(state: &AppState, store_id: &str) -> Result<A
             let _ = crate::storage::indexed_db::save_cached_state_web(store_id, &new_state).await;
             Ok(new_state)
         }
-        Err(crate::storage::SaveRemoteStateError::RevisionConflict(_)) => {
-            Err("保存失败：版本冲突，请刷新后重试".to_string())
-        }
-        Err(e) => Err(format!("保存失败: {:?}", e)),
+        Err(e) => Err(map_save_remote_state_error(e)),
     }
+}
+
+pub(crate) fn start_pending_archive_countdown(
+    mut app_state: Signal<AppState>,
+    mut pending_archive: Signal<Option<PendingArchive>>,
+    store_id: Signal<String>,
+    mut save_status: Signal<Option<String>>,
+) {
+    spawn(async move {
+        for _ in 0..5 {
+            sleep(Duration::from_secs(1)).await;
+            if let Some(ref mut p) = pending_archive.write().as_mut() {
+                if p.remaining_seconds > 0 {
+                    p.remaining_seconds -= 1;
+                }
+            } else {
+                break;
+            }
+        }
+        if let Some(p) = pending_archive() {
+            if p.remaining_seconds == 0 {
+                let before_state = app_state.read().clone();
+                let committed = {
+                    let mut state = app_state.write();
+                    commit_pending_archive(&mut state, p).is_ok()
+                };
+                if committed {
+                    pending_archive.set(None);
+                    let saved_state = app_state.read().clone();
+                    let sid = store_id();
+                    spawn(async move {
+                        save_status.set(Some("保存中...".to_string()));
+                        match save_app_state(&saved_state, &sid).await {
+                            Ok(new_state) => {
+                                app_state.set(new_state);
+                                save_status.set(Some("保存成功".to_string()));
+                            }
+                            Err(e) => {
+                                app_state.set(before_state);
+                                save_status.set(Some(e));
+                            }
+                        }
+                        sleep(Duration::from_secs(3)).await;
+                        save_status.set(None);
+                    });
+                }
+            }
+        }
+    });
+}
+
+pub(crate) fn save_with_rollback(
+    mut app_state: Signal<AppState>,
+    before_state: AppState,
+    store_id: Signal<String>,
+    mut save_status: Signal<Option<String>>,
+) {
+    let sid = store_id();
+    spawn(async move {
+        save_status.set(Some("保存中...".to_string()));
+        let current_state = app_state.read().clone();
+        match save_app_state(&current_state, &sid).await {
+            Ok(new_state) => {
+                app_state.set(new_state);
+                save_status.set(Some("保存成功".to_string()));
+            }
+            Err(e) => {
+                app_state.set(before_state);
+                save_status.set(Some(e));
+            }
+        }
+        sleep(Duration::from_secs(3)).await;
+        save_status.set(None);
+    });
 }
 
 #[component]
@@ -438,10 +523,12 @@ pub fn App() -> Element {
     let pending_archive = use_signal(|| None::<PendingArchive>);
     let store_id = use_signal(|| read_store_id());
     let save_status = use_signal(|| None::<String>);
+    let sync_status = use_signal(|| None::<String>);
 
     use_effect(move || {
         let sid = store_id();
         let mut app_state_signal = app_state;
+        let mut sync_status_signal = sync_status;
         spawn(async move {
             let base_url = option_env!("PUBLIC_API_BASE_URL").unwrap_or("http://localhost:8787");
             // 1. 尝试读 IndexedDB 缓存
@@ -456,8 +543,12 @@ pub fn App() -> Element {
                     // 3. 覆盖 IndexedDB 缓存
                     let _ = crate::storage::indexed_db::save_cached_state_web(&sid, &remote_state)
                         .await;
+                    sync_status_signal.set(None);
                 }
-                Err(_) => {}
+                Err(_) => {
+                    sync_status_signal
+                        .set(Some("无法连接服务器，当前使用本地缓存数据".to_string()));
+                }
             }
         });
     });
@@ -465,6 +556,11 @@ pub fn App() -> Element {
     rsx! {
         style { "{APP_STYLES}" }
         main { class: "app-shell",
+            if let Some(msg) = sync_status() {
+                section { class: "panel",
+                    p { class: "list-line", style: "color: #c03333;", "{msg}" }
+                }
+            }
             h1 { class: "page-title", "{current_page().label()}" }
             p { class: "page-summary", "{current_page().summary()}" }
             match current_page() {
@@ -539,6 +635,7 @@ fn CatalogPage(
                         onclick: move |_| {
                             let pending_to_commit = pending_archive();
                             if let Some(pending) = pending_to_commit {
+                                let before_state = app_state.read().clone();
                                 let new_state = {
                                     let mut current = app_state.write();
                                     if commit_pending_archive(&mut current, pending).is_ok() {
@@ -548,20 +645,13 @@ fn CatalogPage(
                                         None
                                     }
                                 };
-                                if let Some(state) = new_state {
-                                    let sid = store_id();
-                                    spawn(async move {
-                                        save_status.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(saved) => {
-                                                app_state.set(saved);
-                                                save_status.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status.set(None);
-                                    });
+                                if new_state.is_some() {
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                             }
                         },
@@ -646,7 +736,7 @@ fn ParametersPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
 
     let option_items: Vec<(String, String, bool)> = match parameter_tab() {
         ParameterTab::BeanVarieties => state
@@ -739,47 +829,12 @@ fn ParametersPanel(
                                     let current_pending = pending_archive();
                                     if let Ok(pending) = begin_pending_archive(&current_pending, target) {
                                         pending_archive.set(Some(pending));
-                                        let mut app_state_clone = app_state;
-                                        let mut pending_archive_clone = pending_archive;
-                                        let store_id_clone = store_id;
-                                        let mut save_status_clone = save_status;
-                                        spawn(async move {
-                                            for _ in 0..5 {
-                                                sleep(Duration::from_secs(1)).await;
-                                                if let Some(ref mut p) = pending_archive_clone.write().as_mut() {
-                                                    if p.remaining_seconds > 0 {
-                                                        p.remaining_seconds -= 1;
-                                                    }
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                            if let Some(p) = pending_archive_clone() {
-                                                if p.remaining_seconds == 0 {
-                                                    let committed = {
-                                                        let mut state = app_state_clone.write();
-                                                        commit_pending_archive(&mut state, p).is_ok()
-                                                    };
-                                                    if committed {
-                                                        pending_archive_clone.set(None);
-                                                        let saved_state = app_state_clone.read().clone();
-                                                        let sid = store_id_clone();
-                                                        spawn(async move {
-                                                            save_status_clone.set(Some("保存中...".to_string()));
-                                                            match save_app_state(&saved_state, &sid).await {
-                                                                Ok(new_state) => {
-                                                                    app_state_clone.set(new_state);
-                                                                    save_status_clone.set(Some("保存成功".to_string()));
-                                                                }
-                                                                Err(e) => save_status_clone.set(Some(e)),
-                                                            }
-                                                            sleep(Duration::from_secs(3)).await;
-                                                            save_status_clone.set(None);
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                        });
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -820,25 +875,18 @@ fn ParametersPanel(
                                 disabled: archive_locked,
                                 onclick: move |_| {
                                     let input = roast_level_form.read().clone();
+                                    let before_state = app_state.read().clone();
                                     let result = { let mut state = app_state.write(); upsert_roast_level_option(&mut state, &input) };
                                     match result {
                                         Ok(_) => {
                                             errors.set(Vec::new());
                                             roast_level_form.set(RoastLevelFormInput::default());
-                                            let state = app_state.read().clone();
-                                            let sid = store_id();
-                                            spawn(async move {
-                                                save_status.set(Some("保存中...".to_string()));
-                                                match save_app_state(&state, &sid).await {
-                                                    Ok(new_state) => {
-                                                        app_state.set(new_state);
-                                                        save_status.set(Some("保存成功".to_string()));
-                                                    }
-                                                    Err(e) => save_status.set(Some(e)),
-                                                }
-                                                sleep(Duration::from_secs(3)).await;
-                                                save_status.set(None);
-                                            });
+                                            save_with_rollback(
+                                                app_state,
+                                                before_state,
+                                                store_id,
+                                                save_status,
+                                            );
                                         }
                                         Err(validation_errors) => errors.set(validation_errors),
                                     }
@@ -881,25 +929,18 @@ fn ParametersPanel(
                                     } else {
                                         ParameterCatalog::ProcessingMethod
                                     };
+                                    let before_state = app_state.read().clone();
                                     let result = { let mut state = app_state.write(); upsert_parameter_option(&mut state, catalog, &input) };
                                     match result {
                                         Ok(_) => {
                                             errors.set(Vec::new());
                                             parameter_form.set(CatalogOptionFormInput::default());
-                                            let state = app_state.read().clone();
-                                            let sid = store_id();
-                                            spawn(async move {
-                                                save_status.set(Some("保存中...".to_string()));
-                                                match save_app_state(&state, &sid).await {
-                                                    Ok(new_state) => {
-                                                        app_state.set(new_state);
-                                                        save_status.set(Some("保存成功".to_string()));
-                                                    }
-                                                    Err(e) => save_status.set(Some(e)),
-                                                }
-                                                sleep(Duration::from_secs(3)).await;
-                                                save_status.set(None);
-                                            });
+                                            save_with_rollback(
+                                                app_state,
+                                                before_state,
+                                                store_id,
+                                                save_status,
+                                            );
                                         }
                                         Err(validation_errors) => errors.set(validation_errors),
                                     }
@@ -933,7 +974,7 @@ fn BeansPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
 
     rsx! {
         section { class: "panel",
@@ -976,6 +1017,12 @@ fn BeansPanel(
                                         ArchiveTarget::CoffeeBean { id: bean_for_archive.id.clone() }
                                     ) {
                                         pending_archive.set(Some(pending));
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -1054,25 +1101,18 @@ fn BeansPanel(
                                 origin: input.origin,
                                 notes: input.notes,
                             };
+                            let before_state = app_state.read().clone();
                             let result = { let mut state = app_state.write(); upsert_coffee_bean(&mut state, &payload) };
                             match result {
                                 Ok(_) => {
                                     bean_form.set(BeanFormState::default());
                                     errors.set(Vec::new());
-                                    let state = app_state.read().clone();
-                                    let sid = store_id();
-                                    spawn(async move {
-                                        save_status.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(new_state) => {
-                                                app_state.set(new_state);
-                                                save_status.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status.set(None);
-                                    });
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
@@ -1104,7 +1144,7 @@ fn RoastMethodsPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
 
     rsx! {
         section { class: "panel",
@@ -1143,6 +1183,12 @@ fn RoastMethodsPanel(
                                         ArchiveTarget::RoastMethod { id: method_for_archive.id.clone() },
                                     ) {
                                         pending_archive.set(Some(pending));
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -1184,25 +1230,18 @@ fn RoastMethodsPanel(
                                 name: input.name,
                                 notes: input.notes,
                             };
+                            let before_state = app_state.read().clone();
                             let result = { let mut state = app_state.write(); upsert_roast_method(&mut state, &payload) };
                             match result {
                                 Ok(_) => {
                                     method_form.set(RoastMethodFormState::default());
                                     errors.set(Vec::new());
-                                    let state = app_state.read().clone();
-                                    let sid = store_id();
-                                    spawn(async move {
-                                        save_status.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(new_state) => {
-                                                app_state.set(new_state);
-                                                save_status.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status.set(None);
-                                    });
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
@@ -1234,7 +1273,7 @@ fn RoastProfilesPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
 
     rsx! {
         section { class: "panel",
@@ -1278,6 +1317,12 @@ fn RoastProfilesPanel(
                                         ArchiveTarget::RoastProfile { id: profile_for_archive.id.clone() },
                                     ) {
                                         pending_archive.set(Some(pending));
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -1396,25 +1441,18 @@ fn RoastProfilesPanel(
                                 product_line: input.product_line,
                                 batch_code: input.batch_code,
                             };
+                            let before_state = app_state.read().clone();
                             let result = { let mut state = app_state.write(); upsert_roast_profile(&mut state, &payload) };
                             match result {
                                 Ok(_) => {
                                     profile_form.set(RoastProfileFormState::default());
                                     errors.set(Vec::new());
-                                    let state = app_state.read().clone();
-                                    let sid = store_id();
-                                    spawn(async move {
-                                        save_status.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(new_state) => {
-                                                app_state.set(new_state);
-                                                save_status.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status.set(None);
-                                    });
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
@@ -1437,7 +1475,7 @@ fn PlanCategoriesPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
 
     rsx! {
         section { class: "panel",
@@ -1476,6 +1514,12 @@ fn PlanCategoriesPanel(
                                         ArchiveTarget::BrewingPlanCategory { id: category_for_archive.id.clone() },
                                     ) {
                                         pending_archive.set(Some(pending));
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -1507,25 +1551,18 @@ fn PlanCategoriesPanel(
                                 editing_id: category_form.read().editing_id.clone(),
                                 name: category_form.read().name.clone(),
                             };
+                            let before_state = app_state.read().clone();
                             let result = { let mut state = app_state.write(); upsert_brewing_plan_category(&mut state, &payload) };
                             match result {
                                 Ok(_) => {
                                     category_form.set(PlanCategoryFormState::default());
                                     errors.set(Vec::new());
-                                    let state = app_state.read().clone();
-                                    let sid = store_id();
-                                    spawn(async move {
-                                        save_status.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(new_state) => {
-                                                app_state.set(new_state);
-                                                save_status.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status.set(None);
-                                    });
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
@@ -1559,7 +1596,7 @@ fn BrewingPlansPanel(
     let state = app_state();
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
-    let mut save_status: Signal<Option<String>> = use_context();
+    let save_status: Signal<Option<String>> = use_context();
     let category_id = plan_form.read().category_id.clone();
 
     let grinders = state
@@ -1643,6 +1680,12 @@ fn BrewingPlansPanel(
                                         },
                                     ) {
                                         pending_archive.set(Some(pending));
+                                        start_pending_archive_countdown(
+                                            app_state,
+                                            pending_archive,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                 }
                                 },
@@ -1769,25 +1812,18 @@ fn BrewingPlansPanel(
                             let input_form = plan_form.read().clone();
                             match parse_plan_form_to_input(&input_form) {
                                 Ok(payload) => {
+                                    let before_state = app_state.read().clone();
                                     let result = { let mut state = app_state.write(); upsert_brewing_plan(&mut state, &payload) };
                                     match result {
                                     Ok(_) => {
                                         plan_form.set(PlanFormState::default());
                                         errors.set(Vec::new());
-                                        let state = app_state.read().clone();
-                                        let sid = store_id();
-                                        spawn(async move {
-                                            save_status.set(Some("保存中...".to_string()));
-                                            match save_app_state(&state, &sid).await {
-                                                Ok(new_state) => {
-                                                    app_state.set(new_state);
-                                                    save_status.set(Some("保存成功".to_string()));
-                                                }
-                                                Err(e) => save_status.set(Some(e)),
-                                            }
-                                            sleep(Duration::from_secs(3)).await;
-                                            save_status.set(None);
-                                        });
+                                        save_with_rollback(
+                                            app_state,
+                                            before_state,
+                                            store_id,
+                                            save_status,
+                                        );
                                     }
                                     Err(validation_errors) => errors.set(validation_errors),
                                     }
@@ -2077,4 +2113,33 @@ fn find_label(options: &[CatalogOption], id: &str) -> String {
         .find(|item| item.id == id)
         .map(|item| item.label.clone())
         .unwrap_or_else(|| id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_save_remote_state_error;
+    use crate::storage::SaveRemoteStateError;
+
+    #[test]
+    fn map_save_remote_state_error_revision_conflict_returns_refresh_prompt() {
+        let error = SaveRemoteStateError::RevisionConflict(crate::storage::RevisionConflict {
+            current_revision: 2,
+        });
+        let message = map_save_remote_state_error(error);
+        assert_eq!(message, "保存失败：版本冲突，请刷新后重试");
+    }
+
+    #[test]
+    fn map_save_remote_state_error_transport_returns_network_prompt() {
+        let error = SaveRemoteStateError::Transport("connection refused".to_string());
+        let message = map_save_remote_state_error(error);
+        assert_eq!(message, "保存失败：网络异常，请检查网络连接");
+    }
+
+    #[test]
+    fn map_save_remote_state_error_invalid_response_returns_server_prompt() {
+        let error = SaveRemoteStateError::InvalidResponse("bad json".to_string());
+        let message = map_save_remote_state_error(error);
+        assert_eq!(message, "保存失败：服务器响应异常 (bad json)");
+    }
 }

@@ -1,6 +1,4 @@
 use dioxus::prelude::*;
-use gloo_timers::future::sleep;
-use std::time::Duration;
 
 use crate::domain::inventory::{BatchFormError, create_batches};
 use crate::domain::models::{AppState, BatchStatus, ProductLine, RoastProfile};
@@ -8,7 +6,7 @@ use crate::ui::catalog_state::{
     ArchiveTarget, PendingArchive, begin_pending_archive, cancel_pending_archive,
     commit_pending_archive, pending_archive_label,
 };
-use crate::ui::save_app_state;
+use crate::ui::save_with_rollback;
 
 #[derive(Clone, Default)]
 pub struct InventoryFormState {
@@ -16,51 +14,6 @@ pub struct InventoryFormState {
     pub roasted_at: String,
     pub count: String,
     pub notes: String,
-}
-
-fn start_pending_archive_countdown(
-    mut app_state: Signal<AppState>,
-    mut pending_archive: Signal<Option<PendingArchive>>,
-    store_id: Signal<String>,
-    mut save_status: Signal<Option<String>>,
-) {
-    spawn(async move {
-        for _ in 0..5 {
-            sleep(Duration::from_secs(1)).await;
-            if let Some(ref mut p) = pending_archive.write().as_mut() {
-                if p.remaining_seconds > 0 {
-                    p.remaining_seconds -= 1;
-                }
-            } else {
-                break;
-            }
-        }
-        if let Some(p) = pending_archive() {
-            if p.remaining_seconds == 0 {
-                let committed = {
-                    let mut state = app_state.write();
-                    commit_pending_archive(&mut state, p).is_ok()
-                };
-                if committed {
-                    pending_archive.set(None);
-                    let saved_state = app_state.read().clone();
-                    let sid = store_id();
-                    spawn(async move {
-                        save_status.set(Some("保存中...".to_string()));
-                        match save_app_state(&saved_state, &sid).await {
-                            Ok(new_state) => {
-                                app_state.set(new_state);
-                                save_status.set(Some("保存成功".to_string()));
-                            }
-                            Err(e) => save_status.set(Some(e)),
-                        }
-                        sleep(Duration::from_secs(3)).await;
-                        save_status.set(None);
-                    });
-                }
-            }
-        }
-    });
 }
 
 #[component]
@@ -95,6 +48,7 @@ pub fn InventoryPage(
                         onclick: move |_| {
                             let pending_to_commit = pending_archive();
                             if let Some(pending) = pending_to_commit {
+                                let before_state = app_state.read().clone();
                                 let new_state = {
                                     let mut current = app_state.write();
                                     if commit_pending_archive(&mut current, pending).is_ok() {
@@ -104,21 +58,13 @@ pub fn InventoryPage(
                                         None
                                     }
                                 };
-                                if let Some(state) = new_state {
-                                    let sid = store_id();
-                                    let mut save_status_signal = save_status;
-                                    spawn(async move {
-                                        save_status_signal.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(saved) => {
-                                                app_state.set(saved);
-                                                save_status_signal.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status_signal.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status_signal.set(None);
-                                    });
+                                if new_state.is_some() {
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                             }
                         },
@@ -207,24 +153,16 @@ pub fn InventoryPage(
                                 count,
                                 notes,
                             );
+                            let before_state = app_state.read().clone();
                             match result {
                                 Ok(_) => {
                                     errors.set(Vec::new());
-                                    let state = app_state.read().clone();
-                                    let sid = store_id();
-                                    let mut save_status_signal = save_status;
-                                    spawn(async move {
-                                        save_status_signal.set(Some("保存中...".to_string()));
-                                        match save_app_state(&state, &sid).await {
-                                            Ok(saved) => {
-                                                app_state.set(saved);
-                                                save_status_signal.set(Some("保存成功".to_string()));
-                                            }
-                                            Err(e) => save_status_signal.set(Some(e)),
-                                        }
-                                        sleep(Duration::from_secs(3)).await;
-                                        save_status_signal.set(None);
-                                    });
+                                    save_with_rollback(
+                                        app_state,
+                                        before_state,
+                                        store_id,
+                                        save_status,
+                                    );
                                 }
                                 Err(validation_errors) => {
                                     errors.set(validation_errors);
@@ -248,6 +186,9 @@ pub fn InventoryPage(
         section { class: "panel",
             h2 { class: "panel-title", "批次列表" }
             div { class: "list",
+                if sorted_batches.is_empty() {
+                    p { class: "list-line", "暂无批次。请先入库。" }
+                }
                 for batch in sorted_batches {
                     {
                         let profile = state.roast_profiles.iter().find(|p| p.id == batch.profile_id);
@@ -285,7 +226,7 @@ pub fn InventoryPage(
                                                     ArchiveTarget::BatchUsedUp { id: batch_id.clone() },
                                                 ) {
                                                     pending_archive.set(Some(pending));
-                                                    start_pending_archive_countdown(
+                                                    crate::ui::start_pending_archive_countdown(
                                                         app_state,
                                                         pending_archive,
                                                         store_id,
@@ -310,7 +251,7 @@ pub fn InventoryPage(
                                                     ArchiveTarget::BatchArchived { id: batch_id.clone() },
                                                 ) {
                                                     pending_archive.set(Some(pending));
-                                                    start_pending_archive_countdown(
+                                                    crate::ui::start_pending_archive_countdown(
                                                         app_state,
                                                         pending_archive,
                                                         store_id,
