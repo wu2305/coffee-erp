@@ -75,6 +75,7 @@ mod tests {
             batch_no: batch_no.to_string(),
             status: BatchStatus::Active,
             notes: None,
+            capacity_g: 100.0,
         }
     }
 }

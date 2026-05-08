@@ -320,6 +320,12 @@ fn validate_batches(
                 "batch_no must not be empty",
             ));
         }
+        if batch.capacity_g <= 0.0 {
+            errors.push(ValidationError::new(
+                format!("batches[{}].capacity_g", batch.id),
+                "capacity_g must be greater than 0",
+            ));
+        }
     }
 }
 

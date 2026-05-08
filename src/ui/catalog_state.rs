@@ -128,6 +128,8 @@ pub enum ArchiveTarget {
     RoastProfile { id: String },
     BrewingPlanCategory { id: String },
     BrewingPlan { category_id: String, id: String },
+    BatchUsedUp { id: String },
+    BatchArchived { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -716,6 +718,8 @@ pub fn commit_pending_archive(
         ArchiveTarget::BrewingPlan { category_id, id } => {
             archive_brewing_plan(state, &category_id, &id)
         }
+        ArchiveTarget::BatchUsedUp { id } => mark_batch_used_up(state, &id),
+        ArchiveTarget::BatchArchived { id } => archive_batch(state, &id),
     }
 }
 
@@ -774,6 +778,8 @@ pub fn pending_archive_label(state: &AppState, pending: &PendingArchive) -> Stri
                 .unwrap_or("冲煮方案");
             format!("冲煮方案：{label}")
         }
+        ArchiveTarget::BatchUsedUp { id } => lookup_batch_label(state, id, "标记用完"),
+        ArchiveTarget::BatchArchived { id } => lookup_batch_label(state, id, "归档"),
     }
 }
 
@@ -995,6 +1001,22 @@ fn archive_brewing_plan(
     Ok(())
 }
 
+fn mark_batch_used_up(state: &mut AppState, id: &str) -> Result<(), ArchiveCommitError> {
+    let Some(batch) = state.batches.iter_mut().find(|item| item.id == id) else {
+        return Err(ArchiveCommitError::TargetNotFound);
+    };
+    batch.status = crate::domain::models::BatchStatus::UsedUp;
+    Ok(())
+}
+
+fn archive_batch(state: &mut AppState, id: &str) -> Result<(), ArchiveCommitError> {
+    let Some(batch) = state.batches.iter_mut().find(|item| item.id == id) else {
+        return Err(ArchiveCommitError::TargetNotFound);
+    };
+    batch.status = crate::domain::models::BatchStatus::Archived;
+    Ok(())
+}
+
 fn lookup_catalog_label(items: &[CatalogOption], id: &str, prefix: &str) -> String {
     let label = items
         .iter()
@@ -1022,6 +1044,16 @@ fn lookup_name<'a>(
         .find(|(item_id, _)| item_id.as_str() == id)
         .map(|(_, name)| name.as_str())
         .unwrap_or(prefix);
+    format!("{prefix}：{label}")
+}
+
+fn lookup_batch_label(state: &AppState, id: &str, prefix: &str) -> String {
+    let label = state
+        .batches
+        .iter()
+        .find(|item| item.id == id)
+        .map(|item| item.batch_no.as_str())
+        .unwrap_or("批次");
     format!("{prefix}：{label}")
 }
 

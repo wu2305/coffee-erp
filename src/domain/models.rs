@@ -152,6 +152,10 @@ pub struct BrewRatio {
     pub water: f32,
 }
 
+fn default_capacity_g() -> f32 {
+    100.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RoastBatch {
     pub id: String,
@@ -160,6 +164,8 @@ pub struct RoastBatch {
     pub batch_no: String,
     pub status: BatchStatus,
     pub notes: Option<String>,
+    #[serde(default = "default_capacity_g")]
+    pub capacity_g: f32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

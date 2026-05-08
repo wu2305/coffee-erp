@@ -2,6 +2,7 @@
 
 pub mod batch_number;
 pub mod brewing_match;
+pub mod inventory;
 pub mod models;
 pub mod seed;
 pub mod validation;

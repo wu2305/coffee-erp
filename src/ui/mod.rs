@@ -1,4 +1,6 @@
 mod catalog_state;
+mod inventory_page;
+mod today_page;
 
 use dioxus::prelude::*;
 use gloo_timers::future::sleep;
@@ -7,6 +9,8 @@ use web_sys::window;
 
 use crate::domain::models::{AppState, BrewingMatchKind, CatalogOption, ProductLine};
 use crate::domain::seed::seed_app_state;
+use crate::ui::inventory_page::InventoryPage;
+use crate::ui::today_page::TodayPage;
 use catalog_state::{
     ArchiveTarget, BrewingPlanCategoryFormInput, BrewingPlanFormInput, CatalogOptionFormInput,
     CoffeeBeanFormInput, FormValidationError, ParameterCatalog, PendingArchive,
@@ -406,14 +410,14 @@ impl Default for PlanFormState {
     }
 }
 
-fn read_store_id() -> String {
+pub(crate) fn read_store_id() -> String {
     window()
         .and_then(|w| w.local_storage().ok().flatten())
         .and_then(|storage| storage.get_item("coffee_erp:store_id").ok().flatten())
         .unwrap_or_else(|| "store-default".to_string())
 }
 
-async fn save_app_state(state: &AppState, store_id: &str) -> Result<AppState, String> {
+pub(crate) async fn save_app_state(state: &AppState, store_id: &str) -> Result<AppState, String> {
     let base_url = option_env!("PUBLIC_API_BASE_URL").unwrap_or("http://localhost:8787");
     match crate::storage::save_remote_state_wasm(base_url, store_id, state).await {
         Ok(new_state) => {
@@ -464,12 +468,18 @@ pub fn App() -> Element {
             h1 { class: "page-title", "{current_page().label()}" }
             p { class: "page-summary", "{current_page().summary()}" }
             match current_page() {
+                AppPage::Today => rsx! {
+                    TodayPage { app_state }
+                },
+                AppPage::Inventory => rsx! {
+                    InventoryPage { app_state, pending_archive, store_id, save_status }
+                },
                 AppPage::Catalog => rsx! {
                     CatalogPage { app_state, pending_archive, store_id, save_status }
                 },
-                _ => rsx! {
+                AppPage::Settings => rsx! {
                     section { class: "panel",
-                        p { class: "list-line", "M4 本轮只实现资料维护页，其他页面在后续里程碑推进。" }
+                        p { class: "list-line", "设置页面在后续里程碑推进。" }
                     }
                 },
             }

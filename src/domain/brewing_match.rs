@@ -153,6 +153,16 @@ pub fn parse_roasted_at_utc(roasted_at: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(roasted_at)
         .ok()
         .map(|value| value.with_timezone(&Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M")
+                .ok()
+                .map(|ndt| ndt.and_utc())
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|ndt| ndt.and_utc())
+        })
 }
 
 pub fn build_brewing_recommendations(
@@ -199,6 +209,48 @@ pub fn build_brewing_recommendations(
         .collect()
 }
 
+pub fn build_all_brewing_recommendations(
+    batch: &RoastBatch,
+    state: &AppState,
+    now: DateTime<Utc>,
+    dose_g: Option<f32>,
+) -> Vec<BrewingRecommendation> {
+    let Some(roasted_at) = parse_roasted_at_utc(&batch.roasted_at) else {
+        return Vec::new();
+    };
+    let age_days = calculate_age_days(roasted_at, now);
+    let selected_dose = normalize_dose_g(dose_g.unwrap_or(16.0));
+
+    state
+        .brewing_plan_categories
+        .iter()
+        .filter(|cat| !cat.archived)
+        .flat_map(|cat| {
+            cat.plans.iter().filter(|plan| !plan.archived).map(|plan| {
+                let fitted = fit_age_parameters(plan, age_days);
+                let adjusted = if let Some(tds) = state.store.water_tds {
+                    apply_water_quality_adjustment(fitted, &state.water_quality_adjustments, tds)
+                } else {
+                    fitted
+                };
+                BrewingRecommendation {
+                    plan_name: plan.name.clone(),
+                    dripper: plan.parameters.dripper.clone(),
+                    grinder: resolve_grinder_name(
+                        state,
+                        plan.parameters.grinder_profile_id.as_deref(),
+                    ),
+                    grind_size: adjusted.grind_size,
+                    water_temp_c: adjusted.water_temp_c,
+                    dose_g: selected_dose,
+                    total_water_g: calculate_total_water(selected_dose, &plan.parameters.ratio),
+                    pour_stages: plan.parameters.pour_stages,
+                }
+            })
+        })
+        .collect()
+}
+
 fn tds_in_range(tds: f32, adjustment: &WaterQualityAdjustment) -> bool {
     let min_hit = adjustment.tds_min.is_none_or(|min| tds >= min);
     let max_hit = adjustment.tds_max.is_none_or(|max| tds <= max);
@@ -219,7 +271,7 @@ fn resolve_grinder_name(state: &AppState, grinder_profile_id: Option<&str>) -> S
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, TimeZone};
+    use chrono::{Datelike, Duration, TimeZone, Timelike};
 
     use crate::domain::models::{
         BatchStatus, CoffeeBean, ProductLine, RoastBatch, RoastMethod, RoastProfile,
@@ -228,8 +280,9 @@ mod tests {
 
     use super::{
         FittedBrewingParameters, MatchedBrewingPlan, apply_water_quality_adjustment,
-        build_brewing_recommendations, calculate_age_days, calculate_total_water,
-        fit_age_parameters, match_brewing_plans, normalize_dose_g, sort_matched_plans,
+        build_all_brewing_recommendations, build_brewing_recommendations, calculate_age_days,
+        calculate_total_water, fit_age_parameters, match_brewing_plans, normalize_dose_g,
+        parse_roasted_at_utc, sort_matched_plans,
     };
 
     #[test]
@@ -483,6 +536,116 @@ mod tests {
         assert_eq!(recommendations[0].pour_stages, 2);
     }
 
+    #[test]
+    fn build_brewing_recommendations_returns_empty_for_espresso_batch() {
+        let mut state = seed_app_state();
+        state.beans.push(CoffeeBean {
+            id: "bean-1".to_string(),
+            name: "测试豆".to_string(),
+            variety_id: Some("bean-var-bourbon".to_string()),
+            processing_method_id: Some("process-washed".to_string()),
+            origin: None,
+            notes: None,
+            archived: false,
+        });
+        state.roast_methods.push(RoastMethod {
+            id: "method-1".to_string(),
+            name: "测试曲线".to_string(),
+            notes: None,
+            archived: false,
+        });
+        state.roast_profiles.push(RoastProfile {
+            id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            method_id: "method-1".to_string(),
+            roast_level_id: Some("roast-level-light".to_string()),
+            product_line: ProductLine::Espresso,
+            display_name: "测试意式品类".to_string(),
+            batch_code: "ESP".to_string(),
+            recommended_rest_days: None,
+            espresso_note: Some("18g 粉, 25 秒萃取 36g".to_string()),
+            archived: false,
+        });
+        let batch = RoastBatch {
+            id: "batch-1".to_string(),
+            profile_id: "profile-1".to_string(),
+            roasted_at: "2026-05-02T08:00:00Z".to_string(),
+            batch_no: "20260502-ESP-001".to_string(),
+            status: BatchStatus::Active,
+            notes: None,
+            capacity_g: 100.0,
+        };
+        let roasted_at = chrono::Utc.with_ymd_and_hms(2026, 5, 2, 8, 0, 0).unwrap();
+        let now = roasted_at + chrono::Duration::days(7);
+
+        let recommendations = build_brewing_recommendations(&batch, &state, now, None);
+
+        assert_eq!(recommendations, vec![]);
+    }
+
+    #[test]
+    fn build_brewing_recommendations_updates_total_water_when_dose_changes() {
+        let (mut state, batch) =
+            build_state_and_batch("process-sun-dried", "bean-var-bourbon", "roast-level-light");
+        state.store.water_tds = Some(80.0);
+        let roasted_at = chrono::Utc.with_ymd_and_hms(2026, 5, 2, 8, 0, 0).unwrap();
+        let now = roasted_at + chrono::Duration::days(7);
+
+        // Fix the first matched plan to known ratio and default dose for deterministic test
+        let plan = state
+            .brewing_plan_categories
+            .iter_mut()
+            .flat_map(|category| category.plans.iter_mut())
+            .find(|item| item.id == "plan-cake-one-pour")
+            .expect("seed plan exists");
+        plan.parameters.default_dose_g = 16.0;
+        plan.parameters.ratio.coffee = 1.0;
+        plan.parameters.ratio.water = 16.0;
+
+        let rec_default = build_brewing_recommendations(&batch, &state, now, None);
+        let rec_16_1 = build_brewing_recommendations(&batch, &state, now, Some(16.1));
+
+        assert_eq!(rec_default.len(), 1);
+        assert_eq!(rec_16_1.len(), 1);
+        assert_approx_eq(rec_default[0].dose_g, 16.0);
+        assert_approx_eq(rec_default[0].total_water_g, 256.0);
+        assert_approx_eq(rec_16_1[0].dose_g, 16.1);
+        assert_approx_eq(rec_16_1[0].total_water_g, 257.6);
+    }
+
+    #[test]
+    fn build_all_brewing_recommendations_returns_all_active_plans() {
+        let (mut state, batch) =
+            build_state_and_batch("process-washed", "bean-var-bourbon", "roast-level-light");
+        state.store.water_tds = Some(80.0);
+        let roasted_at = chrono::Utc.with_ymd_and_hms(2026, 5, 2, 8, 0, 0).unwrap();
+        let now = roasted_at + chrono::Duration::days(7);
+
+        let all_recs = build_all_brewing_recommendations(&batch, &state, now, None);
+
+        // Seed data contains multiple active plans across categories
+        assert!(
+            all_recs.len() >= 4,
+            "expected at least 4 active plans from seed data, got {}",
+            all_recs.len()
+        );
+        let names: Vec<&str> = all_recs.iter().map(|r| r.plan_name.as_str()).collect();
+        assert!(names.contains(&"标准三段式"));
+        assert!(names.contains(&"蛋糕滤杯一刀流"));
+    }
+
+    #[test]
+    fn parse_roasted_at_utc_parses_datetime_local_format() {
+        let parsed = parse_roasted_at_utc("2026-05-02T08:00");
+        assert!(parsed.is_some());
+        let dt = parsed.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 5);
+        assert_eq!(dt.day(), 2);
+        assert_eq!(dt.hour(), 8);
+        assert_eq!(dt.minute(), 0);
+    }
+
     fn assert_approx_eq(actual: f32, expected: f32) {
         let tolerance = 1e-6;
         assert!(
@@ -564,6 +727,7 @@ mod tests {
             batch_no: "20260502-TEST-001".to_string(),
             status: BatchStatus::Active,
             notes: None,
+            capacity_g: 100.0,
         };
         (state, batch)
     }
