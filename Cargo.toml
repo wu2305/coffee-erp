@@ -8,3 +8,14 @@ dioxus = { version = "0.7.7", features = ["web"] }
 chrono = "0.4.42"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+gloo-net = "0.6"
+gloo-timers = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window", "Storage",
+    "IdbFactory", "IdbDatabase", "IdbObjectStore", "IdbTransaction",
+    "IdbTransactionMode", "IdbRequest", "IdbOpenDbRequest", "IdbVersionChangeEvent",
+    "DomStringList", "DomException",
+] }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"

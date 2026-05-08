@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::domain::models::{AppState, BrewingMatchKind, RoastLevelOption};
 
@@ -123,8 +123,8 @@ pub fn validate_app_state(state: &AppState) -> Result<(), Vec<ValidationError>> 
 
 fn validate_beans(
     state: &AppState,
-    bean_variety_ids: &HashSet<String>,
-    processing_method_ids: &HashSet<String>,
+    bean_variety_ids: &HashSet<&str>,
+    processing_method_ids: &HashSet<&str>,
     errors: &mut Vec<ValidationError>,
 ) {
     for bean in &state.beans {
@@ -135,7 +135,7 @@ fn validate_beans(
             ));
         }
         if let Some(variety_id) = &bean.variety_id
-            && !bean_variety_ids.contains(variety_id)
+            && !bean_variety_ids.contains(variety_id.as_str())
         {
             errors.push(ValidationError::new(
                 format!("beans[{}].variety_id", bean.id),
@@ -143,7 +143,7 @@ fn validate_beans(
             ));
         }
         if let Some(processing_method_id) = &bean.processing_method_id
-            && !processing_method_ids.contains(processing_method_id)
+            && !processing_method_ids.contains(processing_method_id.as_str())
         {
             errors.push(ValidationError::new(
                 format!("beans[{}].processing_method_id", bean.id),
@@ -166,9 +166,9 @@ fn validate_roast_methods(state: &AppState, errors: &mut Vec<ValidationError>) {
 
 fn validate_roast_profiles(
     state: &AppState,
-    bean_ids: &HashSet<String>,
-    roast_method_ids: &HashSet<String>,
-    roast_level_ids: &HashSet<String>,
+    bean_ids: &HashSet<&str>,
+    roast_method_ids: &HashSet<&str>,
+    roast_level_ids: &HashSet<&str>,
     errors: &mut Vec<ValidationError>,
 ) {
     for profile in &state.roast_profiles {
@@ -178,20 +178,20 @@ fn validate_roast_profiles(
                 "display name must not be empty",
             ));
         }
-        if !bean_ids.contains(&profile.bean_id) {
+        if !bean_ids.contains(profile.bean_id.as_str()) {
             errors.push(ValidationError::new(
                 format!("roast_profiles[{}].bean_id", profile.id),
                 format!("referenced bean_id {} does not exist", profile.bean_id),
             ));
         }
-        if !roast_method_ids.contains(&profile.method_id) {
+        if !roast_method_ids.contains(profile.method_id.as_str()) {
             errors.push(ValidationError::new(
                 format!("roast_profiles[{}].method_id", profile.id),
                 format!("referenced method_id {} does not exist", profile.method_id),
             ));
         }
         if let Some(roast_level_id) = &profile.roast_level_id
-            && !roast_level_ids.contains(roast_level_id)
+            && !roast_level_ids.contains(roast_level_id.as_str())
         {
             errors.push(ValidationError::new(
                 format!("roast_profiles[{}].roast_level_id", profile.id),
@@ -209,10 +209,10 @@ fn validate_roast_profiles(
 
 fn validate_brewing_plans(
     state: &AppState,
-    bean_variety_ids: &HashSet<String>,
-    processing_method_ids: &HashSet<String>,
-    roast_level_ids: &HashSet<String>,
-    grinder_ids: &HashSet<String>,
+    bean_variety_ids: &HashSet<&str>,
+    processing_method_ids: &HashSet<&str>,
+    roast_level_ids: &HashSet<&str>,
+    grinder_ids: &HashSet<&str>,
     errors: &mut Vec<ValidationError>,
 ) {
     for (category_index, category) in state.brewing_plan_categories.iter().enumerate() {
@@ -256,7 +256,7 @@ fn validate_brewing_plans(
                 ));
             }
             if let Some(grinder_profile_id) = &plan.parameters.grinder_profile_id
-                && !grinder_ids.contains(grinder_profile_id)
+                && !grinder_ids.contains(grinder_profile_id.as_str())
             {
                 errors.push(ValidationError::new(
                     format!("{plan_path}.parameters.grinder_profile_id"),
@@ -275,11 +275,15 @@ fn validate_brewing_plans(
             }
             for (attr_index, attr) in plan.matching_attributes.iter().enumerate() {
                 let exists = match attr.kind {
-                    BrewingMatchKind::BeanVariety => bean_variety_ids.contains(&attr.option_id),
-                    BrewingMatchKind::ProcessingMethod => {
-                        processing_method_ids.contains(&attr.option_id)
+                    BrewingMatchKind::BeanVariety => {
+                        bean_variety_ids.contains(attr.option_id.as_str())
                     }
-                    BrewingMatchKind::RoastLevel => roast_level_ids.contains(&attr.option_id),
+                    BrewingMatchKind::ProcessingMethod => {
+                        processing_method_ids.contains(attr.option_id.as_str())
+                    }
+                    BrewingMatchKind::RoastLevel => {
+                        roast_level_ids.contains(attr.option_id.as_str())
+                    }
                 };
                 if !exists {
                     errors.push(ValidationError::new(
@@ -294,11 +298,11 @@ fn validate_brewing_plans(
 
 fn validate_batches(
     state: &AppState,
-    roast_profile_ids: &HashSet<String>,
+    roast_profile_ids: &HashSet<&str>,
     errors: &mut Vec<ValidationError>,
 ) {
     for batch in &state.batches {
-        if !roast_profile_ids.contains(&batch.profile_id) {
+        if !roast_profile_ids.contains(batch.profile_id.as_str()) {
             errors.push(ValidationError::new(
                 format!("batches[{}].profile_id", batch.id),
                 format!("referenced profile_id {} does not exist", batch.profile_id),
@@ -319,26 +323,26 @@ fn validate_batches(
     }
 }
 
-fn collect_catalog_option_ids(items: &[crate::domain::models::CatalogOption]) -> HashSet<String> {
+fn collect_catalog_option_ids(items: &[crate::domain::models::CatalogOption]) -> HashSet<&str> {
     items
         .iter()
         .filter(|item| !item.archived)
-        .map(|item| item.id.clone())
+        .map(|item| item.id.as_str())
         .collect()
 }
 
-fn collect_roast_level_ids(items: &[RoastLevelOption]) -> HashSet<String> {
+fn collect_roast_level_ids(items: &[RoastLevelOption]) -> HashSet<&str> {
     items
         .iter()
         .filter(|item| !item.archived)
-        .map(|item| item.id.clone())
+        .map(|item| item.id.as_str())
         .collect()
 }
 
-fn collect_active_ids<'a>(items: impl Iterator<Item = (&'a String, bool)>) -> HashSet<String> {
+fn collect_active_ids<'a>(items: impl Iterator<Item = (&'a String, bool)>) -> HashSet<&'a str> {
     items
         .filter(|(_, archived)| !*archived)
-        .map(|(id, _)| id.clone())
+        .map(|(id, _)| id.as_str())
         .collect()
 }
 
@@ -347,7 +351,7 @@ fn validate_catalog_option_labels(
     field_prefix: &str,
     errors: &mut Vec<ValidationError>,
 ) {
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for (index, (label, archived)) in items.iter().enumerate() {
         if label.trim().is_empty() {
             errors.push(ValidationError::new(
@@ -356,9 +360,7 @@ fn validate_catalog_option_labels(
             ));
         }
         if !archived {
-            let count = seen.entry((*label).clone()).or_insert(0_u32);
-            *count += 1;
-            if *count > 1 {
+            if !seen.insert(label.as_str()) {
                 errors.push(ValidationError::new(
                     format!("{field_prefix}[{index}].label"),
                     "duplicate unarchived label in same catalog",

@@ -7,8 +7,8 @@
 - [x] M0：项目骨架与工程基线。
 - [x] M1：领域模型与 Seed Data。
 - [x] M2：冲煮匹配与参数拟合。
-- [ ] M3：本地状态与 Cloudflare API。
-- [ ] M4：资料维护界面。
+- [x] M3：本地状态与 Cloudflare API。
+- [x] M4：资料维护界面。
 - [ ] M5：入库与今日推荐。
 - [ ] M6：误操作恢复与移动端体验。
 - [ ] M7：部署与发布配置。
@@ -48,31 +48,34 @@
 - [x] 输出 UI 可直接展示的 `BrewingRecommendation`。
 - [x] 覆盖 OR 匹配、排序、无匹配、天数拟合、TDS 边界、总水量、DTO 场景。
 
-## M3 待推进
+## M3 已完成
 
-- [ ] 实现 Worker API：`GET /api/state?store_id=...`。
-- [ ] 实现 Worker API：`PUT /api/state?store_id=...`。
-- [ ] 使用 KV key：`coffee_erp:store:{store_id}:state`。
-- [ ] GET 不存在状态时返回 seed state。
-- [ ] PUT 校验 revision，一致才写入 KV，并递增 revision。
-- [ ] CORS 使用 `ALLOWED_ORIGINS`。
-- [ ] 前端 API client 使用 `PUBLIC_API_BASE_URL`。
-- [ ] IndexedDB 缓存当前 AppState。
-- [ ] localStorage 保存 `store_id` 和 UI 偏好。
-- [ ] revision 冲突时强制刷新，不做 diff。
-- [ ] 补 Worker 和前端 storage 测试。
+- [x] 实现 Worker API：`GET /api/state?store_id=...`。
+- [x] 实现 Worker API：`PUT /api/state?store_id=...`。
+- [x] 使用 KV key：`coffee_erp:store:{store_id}:state`。
+- [x] GET 不存在状态时返回 seed state。
+- [x] PUT 校验 revision，一致才写入 KV，并递增 revision。
+- [x] CORS 使用 `ALLOWED_ORIGINS`。
+- [x] 前端 API client 使用 `PUBLIC_API_BASE_URL`。
+- [x] IndexedDB 缓存当前 AppState 的 trait 边界。
+- [x] localStorage 保存 `store_id` 和 UI 偏好的 trait 边界。
+- [x] revision 冲突时阻止保存，并提示用户刷新远端最新数据；MVP 不做 diff。
+- [x] 补 Worker 和前端 storage 测试。
 
-## M4 待推进
+## M4 已完成
 
-- [ ] 参数目录维护：豆种、烘焙度、处理法。
-- [ ] 咖啡豆维护：名称、豆种、处理法、产地、备注。
-- [ ] 烘焙方法维护。
-- [ ] 烘焙品类维护：豆子、方法、烘焙度、产品线、`batch_code`。
-- [ ] `batch_code` 自动建议，并允许保存前修改。
-- [ ] 冲煮方案分类维护。
-- [ ] 冲煮方案维护：匹配属性、注水段数、滤杯、磨豆机、比例、day 0/day 14、说明文字。
-- [ ] 归档操作接入 pending undo。
-- [ ] 表单校验错误展示。
+- [x] 参数目录维护：豆种、烘焙度、处理法。
+- [x] 咖啡豆维护：名称、豆种、处理法、产地、备注。
+- [x] 烘焙方法维护。
+- [x] 烘焙品类维护：豆子、方法、烘焙度、产品线、`batch_code`。
+- [x] `batch_code` 自动建议，并允许保存前修改。
+- [x] 冲煮方案分类维护。
+- [x] 冲煮方案维护：匹配属性、注水段数、滤杯、磨豆机、比例、day 0/day 14、说明文字。
+- [x] 归档操作接入 pending undo（5 秒倒计时，超时自动提交）。
+- [x] 表单校验错误展示。
+- [x] 统一 AppState 保存入口：`save_app_state` 异步函数，资料编辑成功后自动调用。
+- [x] pending undo 期间普通写操作按钮禁用；当前 pending 的“确认归档”和“撤销”作为唯一例外。
+- [x] 消除 `src/ui/mod.rs` 整表 `.clone()`，改用 `iter()` 迭代。
 
 ## M5 待推进
 
@@ -109,4 +112,6 @@
 - [x] `cargo test`
 - [x] `cargo check --all-targets`
 - [x] `dx build --platform web`
+- [x] `pnpm test` in `worker/`
+- [x] `pnpm typecheck` in `worker/`
 - [x] 源码中未使用 `allow(dead_code)`、`todo!()`、`unimplemented!()`、显式 `panic!` 绕过验收。

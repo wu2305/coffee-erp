@@ -206,7 +206,7 @@
 - M3.7 前端 API client 使用 `PUBLIC_API_BASE_URL`。
 - M3.8 IndexedDB 缓存当前 AppState。
 - M3.9 localStorage 保存 `store_id` 和 UI 偏好。
-- M3.10 revision 冲突时强制刷新，不做 diff。
+- M3.10 revision 冲突时阻止保存，并提示用户刷新远端最新数据；MVP 不做 diff。
 
 ### 测试覆盖
 

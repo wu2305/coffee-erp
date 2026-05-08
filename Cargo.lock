@@ -272,8 +272,14 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dioxus",
+ "gloo-net",
+ "gloo-timers",
+ "js-sys",
  "serde",
  "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

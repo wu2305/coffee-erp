@@ -1,0 +1,15 @@
+{
+  "name": "coffee-erp-worker",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.1",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260503.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
+  }
+}
