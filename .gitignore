@@ -3,3 +3,10 @@
 /.dioxus
 node_modules/
 .pnpm-store/
+worker/.wrangler/
+worker/wrangler.toml
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*

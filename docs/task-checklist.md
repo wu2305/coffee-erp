@@ -11,7 +11,7 @@
 - [x] M4：资料维护界面。
 - [x] M5：入库与今日推荐。
 - [x] M6：误操作恢复与移动端体验。
-- [ ] M7：部署与发布配置。
+- [x] M7：部署与发布配置。
 
 ## M0 已完成
 
@@ -100,11 +100,11 @@
 
 ## M7 待推进
 
-- [ ] Cloudflare Pages / Workers / KV 配置文档。
-- [ ] EdgeOne Pages 静态前端镜像配置文档。
-- [ ] 环境变量说明：`PUBLIC_API_BASE_URL`、`ALLOWED_ORIGINS`、`KV_NAMESPACE`、`STORE_ID_SEED`。
-- [ ] 本地构建和部署命令整理。
-- [ ] 发布前检查清单。
+- [x] Cloudflare Pages / Workers / KV 配置文档。
+- [x] EdgeOne Pages 静态前端镜像配置文档。
+- [x] 环境变量说明：`PUBLIC_API_BASE_URL`、`ALLOWED_ORIGINS`、`KV_NAMESPACE`、`STORE_ID_SEED`。
+- [x] 本地构建和部署命令整理。
+- [x] 发布前检查清单。
 
 ## 当前验证
 
@@ -114,4 +114,4 @@
 - [x] `dx build --platform web`
 - [x] `pnpm test` in `worker/`
 - [x] `pnpm typecheck` in `worker/`
-- [x] 源码中未使用 `allow(dead_code)`、`todo!()`、`unimplemented!()`、显式 `panic!` 绕过验收。
+- [x] 源码中未使用 `allow(dead_code)`、`todo!()`、`unimplemented!()`、显式 `panic!`、`structuredClone`、`deep_clone`、`deepClone` 绕过验收。

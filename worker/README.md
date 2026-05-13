@@ -24,3 +24,8 @@ Cloudflare Worker API for the shared Coffee ERP state document.
 ```bash
 pnpm test
 ```
+
+## Deployment
+
+- Deployment runbook: `docs/deployment.md`
+- Worker config template: `worker/wrangler.toml.example` (copy to `worker/wrangler.toml` and fill placeholders)

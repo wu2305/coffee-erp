@@ -1,0 +1,12 @@
+name = "coffee-erp-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-09"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "KV_NAMESPACE"
+id = "<cloudflare-kv-namespace-id>"
+
+[vars]
+ALLOWED_ORIGINS = "https://<cloudflare-pages-host>,https://<cloudflare-pages-custom-domain>,https://<edgeone-pages-host>"
+STORE_ID_SEED = "store-default"
