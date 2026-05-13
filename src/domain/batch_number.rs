@@ -71,9 +71,15 @@ mod tests {
         RoastBatch {
             id: format!("batch-{batch_no}"),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(crate::domain::models::ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: batch_no.to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         }

@@ -7,6 +7,7 @@ use gloo_timers::future::sleep;
 use std::time::Duration;
 use web_sys::window;
 
+use crate::domain::agtron::roast_level_bounds;
 use crate::domain::models::{AppState, BrewingMatchKind, CatalogOption, ProductLine};
 use crate::domain::seed::seed_app_state;
 use crate::ui::inventory_page::InventoryPage;
@@ -14,9 +15,9 @@ use crate::ui::today_page::TodayPage;
 use catalog_state::{
     ArchiveTarget, BrewingPlanCategoryFormInput, BrewingPlanFormInput, CatalogOptionFormInput,
     CoffeeBeanFormInput, FormValidationError, ParameterCatalog, PendingArchive,
-    RoastLevelFormInput, RoastMethodFormInput, RoastProfileFormInput, add_matching_attribute,
-    begin_pending_archive, cancel_pending_archive, commit_pending_archive, pending_archive_label,
-    remove_matching_attribute, suggest_batch_code, upsert_brewing_plan,
+    RoastLevelFormInput, RoastMethodFormInput, RoastProfileFormInput, DEFAULT_ROAST_METHOD_NAME,
+    add_matching_attribute, begin_pending_archive, cancel_pending_archive, commit_pending_archive,
+    pending_archive_label, remove_matching_attribute, suggest_batch_code, upsert_brewing_plan,
     upsert_brewing_plan_category, upsert_coffee_bean, upsert_parameter_option,
     upsert_roast_level_option, upsert_roast_method, upsert_roast_profile,
 };
@@ -65,7 +66,7 @@ body {
   margin-bottom: 10px;
 }
 
-.tabs-six {
+.tabs-main {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -85,6 +86,43 @@ body {
   font-weight: 600;
 }
 
+.subtabs-shell {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid #e3e7f5;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.subtabs-label {
+  margin: 0 0 8px;
+  color: #55607a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.subtabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.subtab-item {
+  border: 1px solid #d7deef;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #44506a;
+  padding: 7px 6px;
+  font-size: 12px;
+}
+
+.subtab-item-active {
+  border-color: #8aa7ff;
+  background: #edf3ff;
+  color: #2348b8;
+  font-weight: 600;
+}
+
 .panel {
   border: 1px solid #e3e5ef;
   border-radius: 8px;
@@ -93,8 +131,55 @@ body {
 }
 
 .panel-title {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 15px;
+  line-height: 1.3;
+}
+
+.panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.panel-head-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+}
+
+.panel-head > .button {
+  justify-self: end;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.section-helper {
+  margin: 0;
+  color: #61697d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.form-mode-card {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #dbe3fb;
+  background: #f7f9ff;
+}
+
+.form-mode-editing {
+  border-color: #c6d5ff;
+  background: #eef4ff;
+}
+
+.form-mode-creating {
+  border-color: #d9e6de;
+  background: #f5fbf7;
 }
 
 .grid {
@@ -152,6 +237,76 @@ body {
   color: #c03333;
 }
 
+.button-small {
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.field-with-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-with-action .text-input,
+.field-with-action .select-input,
+.field-with-action .number-input {
+  flex: 1;
+}
+
+.field-action-button,
+.field-icon {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.field-action-button {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.field-icon {
+  border: 1px solid #d9deef;
+  background: #f7f9ff;
+  color: #5d6884;
+  pointer-events: none;
+  font-size: 16px;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.stepper-value {
+  min-width: 72px;
+  padding: 6px 10px;
+  border: 1px solid #d9deef;
+  border-radius: 999px;
+  background: #f7f9ff;
+  color: #2f3550;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .list {
   display: grid;
   gap: 8px;
@@ -205,12 +360,14 @@ body {
 
 .bottom-nav {
   position: fixed;
-  left: 50%;
+  left: 0;
+  right: 0;
   bottom: 0;
-  transform: translateX(-50%);
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  width: min(480px, 100%);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(480px, 100vw);
+  box-sizing: border-box;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   gap: 8px;
   border-top: 1px solid #e6e6ea;
@@ -218,6 +375,8 @@ body {
 }
 
 .nav-item {
+  width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -239,18 +398,16 @@ enum AppPage {
     Today,
     Inventory,
     Catalog,
-    Settings,
 }
 
 impl AppPage {
-    const ALL: [Self; 4] = [Self::Today, Self::Inventory, Self::Catalog, Self::Settings];
+    const ALL: [Self; 3] = [Self::Today, Self::Inventory, Self::Catalog];
 
     const fn label(self) -> &'static str {
         match self {
             Self::Today => "今日",
             Self::Inventory => "入库",
             Self::Catalog => "资料",
-            Self::Settings => "设置",
         }
     }
 
@@ -259,7 +416,6 @@ impl AppPage {
             Self::Today => "查看今日冲煮安排与批次状态。",
             Self::Inventory => "录入新豆批次与基础信息。",
             Self::Catalog => "维护目录项与冲煮方案资料。",
-            Self::Settings => "配置门店偏好和系统参数。",
         }
     }
 }
@@ -268,18 +424,18 @@ impl AppPage {
 enum CatalogSection {
     Parameters,
     Beans,
+    #[allow(dead_code)]
     RoastMethods,
+    #[allow(dead_code)]
     RoastProfiles,
     PlanCategories,
     BrewingPlans,
 }
 
 impl CatalogSection {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 4] = [
         Self::Parameters,
         Self::Beans,
-        Self::RoastMethods,
-        Self::RoastProfiles,
         Self::PlanCategories,
         Self::BrewingPlans,
     ];
@@ -407,6 +563,69 @@ impl Default for PlanFormState {
             instructions: String::new(),
             priority: "1".to_string(),
         }
+    }
+}
+
+fn reset_page_scroll() {
+    if let Some(win) = window() {
+        win.scroll_to_with_x_and_y(0.0, 0.0);
+    }
+    spawn(async move {
+        sleep(Duration::from_millis(32)).await;
+        if let Some(win) = window() {
+            win.scroll_to_with_x_and_y(0.0, 0.0);
+        }
+    });
+}
+
+fn form_mode_title(entity_name: &str, editing: bool) -> String {
+    if editing {
+        format!("编辑{entity_name}")
+    } else {
+        format!("新增{entity_name}")
+    }
+}
+
+fn form_mode_hint(editing: bool, subject: &str, create_hint: &str) -> String {
+    if editing {
+        let subject = subject.trim();
+        if subject.is_empty() {
+            "当前正在编辑已有资料，保存后会覆盖原内容。".to_string()
+        } else {
+            format!("正在编辑：{subject}")
+        }
+    } else {
+        create_hint.to_string()
+    }
+}
+
+const fn submit_button_label(editing: bool) -> &'static str {
+    if editing {
+        "保存修改"
+    } else {
+        "新增并保存"
+    }
+}
+
+const fn secondary_button_label(editing: bool) -> &'static str {
+    if editing {
+        "取消编辑"
+    } else {
+        "清空"
+    }
+}
+
+fn format_agtron_form_value(value: Option<f32>) -> String {
+    match value {
+        Some(value) => {
+            let rounded = (value * 10.0).round() / 10.0;
+            if rounded.fract().abs() < f32::EPSILON {
+                format!("{rounded:.0}")
+            } else {
+                format!("{rounded:.1}")
+            }
+        }
+        None => String::new(),
     }
 }
 
@@ -573,18 +792,16 @@ pub fn App() -> Element {
                 AppPage::Catalog => rsx! {
                     CatalogPage { app_state, pending_archive, store_id, save_status }
                 },
-                AppPage::Settings => rsx! {
-                    section { class: "panel",
-                        p { class: "list-line", "设置页面在后续里程碑推进。" }
-                    }
-                },
             }
         }
         nav { class: "bottom-nav",
             for page in AppPage::ALL {
                 button {
                     class: if current_page() == page { "nav-item nav-item-active" } else { "nav-item" },
-                    onclick: move |_| current_page.set(page),
+                    onclick: move |_| {
+                        current_page.set(page);
+                        reset_page_scroll();
+                    },
                     "{page.label()}"
                 }
             }
@@ -675,7 +892,7 @@ fn CatalogPage(
     rsx! {
         {archive_section}
         {save_banner}
-        div { class: "tabs tabs-six",
+        div { class: "tabs",
             for item in CatalogSection::ALL {
                 button {
                     class: if section() == item { "tab-item tab-item-active" } else { "tab-item" },
@@ -738,7 +955,8 @@ fn ParametersPanel(
     let store_id: Signal<String> = use_context();
     let save_status: Signal<Option<String>> = use_context();
 
-    let option_items: Vec<(String, String, bool)> = match parameter_tab() {
+    let active_parameter_tab = parameter_tab();
+    let option_items: Vec<(String, String, bool)> = match active_parameter_tab {
         ParameterTab::BeanVarieties => state
             .coffee_parameters
             .bean_varieties
@@ -764,22 +982,60 @@ fn ParametersPanel(
             })
             .collect(),
     };
+    let parameter_is_editing = match active_parameter_tab {
+        ParameterTab::RoastLevels => roast_level_form.read().editing_id.is_some(),
+        _ => parameter_form.read().editing_id.is_some(),
+    };
+    let parameter_mode_title = form_mode_title(active_parameter_tab.label(), parameter_is_editing);
+    let parameter_mode_hint = match active_parameter_tab {
+        ParameterTab::RoastLevels => form_mode_hint(
+            parameter_is_editing,
+            roast_level_form.read().label.as_str(),
+            "填写烘焙度名称与 Agtron 上下界后保存。",
+        ),
+        _ => form_mode_hint(
+            parameter_is_editing,
+            parameter_form.read().label.as_str(),
+            "填写目录项名称后保存，即可加入当前参数子目录。",
+        ),
+    };
+    let parameter_create_label = format!("新增{}", active_parameter_tab.label());
 
     rsx! {
-        div { class: "tabs",
-            for tab in ParameterTab::ALL {
-                button {
-                    class: if parameter_tab() == tab { "tab-item tab-item-active" } else { "tab-item" },
-                    onclick: move |_| {
-                        parameter_tab.set(tab);
-                        errors.set(Vec::new());
-                    },
-                    "{tab.label()}"
+        section { class: "subtabs-shell",
+            p { class: "subtabs-label", "参数子目录" }
+            div { class: "subtabs",
+                for tab in ParameterTab::ALL {
+                    button {
+                        class: if active_parameter_tab == tab { "subtab-item subtab-item-active" } else { "subtab-item" },
+                        onclick: move |_| {
+                            parameter_tab.set(tab);
+                            errors.set(Vec::new());
+                        },
+                        "{tab.label()}"
+                    }
                 }
             }
         }
         section { class: "panel",
-            h2 { class: "panel-title", "目录列表" }
+            div { class: "panel-head",
+                div { class: "panel-head-copy",
+                    h2 { class: "panel-title", "目录列表" }
+                    p { class: "section-helper", "先确认参数子目录，再从列表中选择查看/编辑，或创建新目录项。" }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        errors.set(Vec::new());
+                        match active_parameter_tab {
+                            ParameterTab::RoastLevels => roast_level_form.set(RoastLevelFormInput::default()),
+                            _ => parameter_form.set(CatalogOptionFormInput::default()),
+                        }
+                    },
+                    "{parameter_create_label}"
+                }
+            }
             div { class: "list",
                 for (id, label, archived) in option_items {
                     div { class: "list-item",
@@ -793,27 +1049,29 @@ fn ParametersPanel(
                                     let edit_id = id.clone();
                                     let edit_label = label.clone();
                                     move |_| {
-                                    errors.set(Vec::new());
-                                    match parameter_tab() {
-                                        ParameterTab::RoastLevels => {
-                                            if let Some(level) = app_state.read().coffee_parameters.roast_levels.iter().find(|item| item.id == edit_id) {
-                                                roast_level_form.set(RoastLevelFormInput {
-                                                    editing_id: Some(level.id.clone()),
-                                                    label: level.label.clone(),
-                                                    agtron_range: level.agtron_range.clone(),
+                                        errors.set(Vec::new());
+                                        match active_parameter_tab {
+                                            ParameterTab::RoastLevels => {
+                                                if let Some(level) = app_state.read().coffee_parameters.roast_levels.iter().find(|item| item.id == edit_id) {
+                                                    let (agtron_min, agtron_max) = roast_level_bounds(level).unwrap_or((None, None));
+                                                    roast_level_form.set(RoastLevelFormInput {
+                                                        editing_id: Some(level.id.clone()),
+                                                        label: level.label.clone(),
+                                                        agtron_min: format_agtron_form_value(agtron_min),
+                                                        agtron_max: format_agtron_form_value(agtron_max),
+                                                    });
+                                                }
+                                            }
+                                            _ => {
+                                                parameter_form.set(CatalogOptionFormInput {
+                                                    editing_id: Some(edit_id.clone()),
+                                                    label: edit_label.split(" (").next().unwrap_or("").to_string(),
                                                 });
                                             }
                                         }
-                                        _ => {
-                                            parameter_form.set(CatalogOptionFormInput {
-                                                editing_id: Some(edit_id.clone()),
-                                                label: edit_label.split(" (").next().unwrap_or("").to_string(),
-                                            });
-                                        }
                                     }
-                                }
                                 },
-                                "编辑"
+                                "查看/编辑"
                             }
                             button {
                                 class: "button button-danger",
@@ -821,22 +1079,22 @@ fn ParametersPanel(
                                 onclick: {
                                     let archive_id = id.clone();
                                     move |_| {
-                                    let target = match parameter_tab() {
-                                        ParameterTab::BeanVarieties => ArchiveTarget::BeanVariety { id: archive_id.clone() },
-                                        ParameterTab::RoastLevels => ArchiveTarget::RoastLevel { id: archive_id.clone() },
-                                        ParameterTab::ProcessingMethods => ArchiveTarget::ProcessingMethod { id: archive_id.clone() },
-                                    };
-                                    let current_pending = pending_archive();
-                                    if let Ok(pending) = begin_pending_archive(&current_pending, target) {
-                                        pending_archive.set(Some(pending));
-                                        start_pending_archive_countdown(
-                                            app_state,
-                                            pending_archive,
-                                            store_id,
-                                            save_status,
-                                        );
+                                        let target = match active_parameter_tab {
+                                            ParameterTab::BeanVarieties => ArchiveTarget::BeanVariety { id: archive_id.clone() },
+                                            ParameterTab::RoastLevels => ArchiveTarget::RoastLevel { id: archive_id.clone() },
+                                            ParameterTab::ProcessingMethods => ArchiveTarget::ProcessingMethod { id: archive_id.clone() },
+                                        };
+                                        let current_pending = pending_archive();
+                                        if let Ok(pending) = begin_pending_archive(&current_pending, target) {
+                                            pending_archive.set(Some(pending));
+                                            start_pending_archive_countdown(
+                                                app_state,
+                                                pending_archive,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
                                     }
-                                }
                                 },
                                 "归档"
                             }
@@ -844,7 +1102,10 @@ fn ParametersPanel(
                     }
                 }
             }
-            match parameter_tab() {
+        }
+        section { class: "panel",
+            FormModeCard { title: parameter_mode_title, hint: parameter_mode_hint, editing: parameter_is_editing }
+            match active_parameter_tab {
                 ParameterTab::RoastLevels => rsx! {
                     div { class: "grid",
                         div {
@@ -860,14 +1121,43 @@ fn ParametersPanel(
                         }
                         div {
                             label { class: "field-label", "Agtron 范围" }
-                            input {
-                                class: "text-input",
-                                value: "{roast_level_form.read().agtron_range}",
-                                oninput: move |event| {
-                                    roast_level_form.write().agtron_range = event.value();
-                                },
+                            div { class: "grid", style: "grid-template-columns: repeat(2, minmax(0, 1fr));",
+                                div {
+                                    label { class: "field-label", "下界" }
+                                    input {
+                                        class: "number-input",
+                                        r#type: "number",
+                                        inputmode: "decimal",
+                                        min: "1",
+                                        max: "150",
+                                        step: "0.1",
+                                        placeholder: "例如 90",
+                                        value: "{roast_level_form.read().agtron_min}",
+                                        oninput: move |event| {
+                                            roast_level_form.write().agtron_min = event.value();
+                                        },
+                                    }
+                                    FieldError { errors, field: "agtron_min" }
+                                }
+                                div {
+                                    label { class: "field-label", "上界" }
+                                    input {
+                                        class: "number-input",
+                                        r#type: "number",
+                                        inputmode: "decimal",
+                                        min: "1",
+                                        max: "150",
+                                        step: "0.1",
+                                        placeholder: "留空表示以上",
+                                        value: "{roast_level_form.read().agtron_max}",
+                                        oninput: move |event| {
+                                            roast_level_form.write().agtron_max = event.value();
+                                        },
+                                    }
+                                    FieldError { errors, field: "agtron_max" }
+                                }
                             }
-                            FieldError { errors, field: "agtron_range" }
+                            p { class: "section-helper", "上界可留空，留空后会按“下界+”保存。" }
                         }
                         div { class: "action-row",
                             button {
@@ -891,7 +1181,7 @@ fn ParametersPanel(
                                         Err(validation_errors) => errors.set(validation_errors),
                                     }
                                 },
-                                "保存"
+                                "{submit_button_label(parameter_is_editing)}"
                             }
                             button {
                                 class: "button button-secondary",
@@ -900,7 +1190,7 @@ fn ParametersPanel(
                                     roast_level_form.set(RoastLevelFormInput::default());
                                     errors.set(Vec::new());
                                 },
-                                "清空"
+                                "{secondary_button_label(parameter_is_editing)}"
                             }
                         }
                     }
@@ -924,7 +1214,7 @@ fn ParametersPanel(
                                 disabled: archive_locked,
                                 onclick: move |_| {
                                     let input = parameter_form.read().clone();
-                                    let catalog = if parameter_tab() == ParameterTab::BeanVarieties {
+                                    let catalog = if active_parameter_tab == ParameterTab::BeanVarieties {
                                         ParameterCatalog::BeanVariety
                                     } else {
                                         ParameterCatalog::ProcessingMethod
@@ -945,7 +1235,7 @@ fn ParametersPanel(
                                         Err(validation_errors) => errors.set(validation_errors),
                                     }
                                 },
-                                "保存"
+                                "{submit_button_label(parameter_is_editing)}"
                             }
                             button {
                                 class: "button button-secondary",
@@ -954,7 +1244,7 @@ fn ParametersPanel(
                                     parameter_form.set(CatalogOptionFormInput::default());
                                     errors.set(Vec::new());
                                 },
-                                "清空"
+                                "{secondary_button_label(parameter_is_editing)}"
                             }
                         }
                     }
@@ -975,10 +1265,31 @@ fn BeansPanel(
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
     let save_status: Signal<Option<String>> = use_context();
+    let bean_is_editing = bean_form.read().editing_id.is_some();
+    let bean_mode_title = form_mode_title("咖啡豆", bean_is_editing);
+    let bean_mode_hint = form_mode_hint(
+        bean_is_editing,
+        bean_form.read().name.as_str(),
+        "填写名称、豆种和处理法后保存，即可新增一条咖啡豆资料。",
+    );
 
     rsx! {
         section { class: "panel",
-            h2 { class: "panel-title", "咖啡豆列表" }
+            div { class: "panel-head",
+                div { class: "panel-head-copy",
+                    h2 { class: "panel-title", "咖啡豆列表" }
+                    p { class: "section-helper", "列表用于快速查看摘要；点击“查看/编辑”后，可在下方表单修改。" }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        bean_form.set(BeanFormState::default());
+                        errors.set(Vec::new());
+                    },
+                    "新增咖啡豆"
+                }
+            }
             div { class: "list",
                 for bean in state.beans.iter() {
                     div { class: "list-item",
@@ -992,18 +1303,18 @@ fn BeansPanel(
                                 onclick: {
                                     let bean_for_edit = bean.clone();
                                     move |_| {
-                                    bean_form.set(BeanFormState {
-                                        editing_id: Some(bean_for_edit.id.clone()),
-                                        name: bean_for_edit.name.clone(),
-                                        variety_id: bean_for_edit.variety_id.clone().unwrap_or_default(),
-                                        processing_method_id: bean_for_edit.processing_method_id.clone().unwrap_or_default(),
-                                        origin: bean_for_edit.origin.clone().unwrap_or_default(),
-                                        notes: bean_for_edit.notes.clone().unwrap_or_default(),
-                                    });
-                                    errors.set(Vec::new());
-                                }
+                                        bean_form.set(BeanFormState {
+                                            editing_id: Some(bean_for_edit.id.clone()),
+                                            name: bean_for_edit.name.clone(),
+                                            variety_id: bean_for_edit.variety_id.clone().unwrap_or_default(),
+                                            processing_method_id: bean_for_edit.processing_method_id.clone().unwrap_or_default(),
+                                            origin: bean_for_edit.origin.clone().unwrap_or_default(),
+                                            notes: bean_for_edit.notes.clone().unwrap_or_default(),
+                                        });
+                                        errors.set(Vec::new());
+                                    }
                                 },
-                                "编辑"
+                                "查看/编辑"
                             }
                             button {
                                 class: "button button-danger",
@@ -1011,20 +1322,20 @@ fn BeansPanel(
                                 onclick: {
                                     let bean_for_archive = bean.clone();
                                     move |_| {
-                                    let current_pending = pending_archive();
-                                    if let Ok(pending) = begin_pending_archive(
-                                        &current_pending,
-                                        ArchiveTarget::CoffeeBean { id: bean_for_archive.id.clone() }
-                                    ) {
-                                        pending_archive.set(Some(pending));
-                                        start_pending_archive_countdown(
-                                            app_state,
-                                            pending_archive,
-                                            store_id,
-                                            save_status,
-                                        );
+                                        let current_pending = pending_archive();
+                                        if let Ok(pending) = begin_pending_archive(
+                                            &current_pending,
+                                            ArchiveTarget::CoffeeBean { id: bean_for_archive.id.clone() }
+                                        ) {
+                                            pending_archive.set(Some(pending));
+                                            start_pending_archive_countdown(
+                                                app_state,
+                                                pending_archive,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
                                     }
-                                }
                                 },
                                 "归档"
                             }
@@ -1034,7 +1345,7 @@ fn BeansPanel(
             }
         }
         section { class: "panel",
-            h2 { class: "panel-title", "咖啡豆表单" }
+            FormModeCard { title: bean_mode_title, hint: bean_mode_hint, editing: bean_is_editing }
             div { class: "grid",
                 div {
                     label { class: "field-label", "名称" }
@@ -1117,7 +1428,7 @@ fn BeansPanel(
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
                         },
-                        "保存"
+                        "{submit_button_label(bean_is_editing)}"
                     }
                     button {
                         class: "button button-secondary",
@@ -1126,7 +1437,7 @@ fn BeansPanel(
                             bean_form.set(BeanFormState::default());
                             errors.set(Vec::new());
                         },
-                        "清空"
+                        "{secondary_button_label(bean_is_editing)}"
                     }
                 }
             }
@@ -1274,10 +1585,31 @@ fn RoastProfilesPanel(
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
     let save_status: Signal<Option<String>> = use_context();
+    let profile_is_editing = profile_form.read().editing_id.is_some();
+    let profile_mode_title = form_mode_title("烘焙品类", profile_is_editing);
+    let profile_mode_hint = form_mode_hint(
+        profile_is_editing,
+        profile_form.read().batch_code.as_str(),
+        "选择咖啡豆、产品线和烘焙度后保存，即可新增一条烘焙品类。",
+    );
 
     rsx! {
         section { class: "panel",
-            h2 { class: "panel-title", "烘焙品类列表" }
+            div { class: "panel-head",
+                div { class: "panel-head-copy",
+                    h2 { class: "panel-title", "烘焙品类列表" }
+                    p { class: "section-helper", "先查看当前品类摘要，再进入下方表单编辑或创建新品类。" }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        profile_form.set(RoastProfileFormState::default());
+                        errors.set(Vec::new());
+                    },
+                    "新增品类"
+                }
+            }
             div { class: "list",
                 for item in state.roast_profiles.iter() {
                     div { class: "list-item",
@@ -1291,19 +1623,19 @@ fn RoastProfilesPanel(
                                 onclick: {
                                     let profile_for_edit = item.clone();
                                     move |_| {
-                                    profile_form.set(RoastProfileFormState {
-                                        editing_id: Some(profile_for_edit.id.clone()),
-                                        bean_id: profile_for_edit.bean_id.clone(),
-                                        method_id: profile_for_edit.method_id.clone(),
-                                        roast_level_id: profile_for_edit.roast_level_id.clone().unwrap_or_default(),
-                                        product_line: profile_for_edit.product_line,
-                                        batch_code: profile_for_edit.batch_code.clone(),
-                                        batch_code_customized: true,
-                                    });
-                                    errors.set(Vec::new());
-                                }
+                                        profile_form.set(RoastProfileFormState {
+                                            editing_id: Some(profile_for_edit.id.clone()),
+                                            bean_id: profile_for_edit.bean_id.clone(),
+                                            method_id: profile_for_edit.method_id.clone(),
+                                            roast_level_id: profile_for_edit.roast_level_id.clone().unwrap_or_default(),
+                                            product_line: profile_for_edit.product_line,
+                                            batch_code: profile_for_edit.batch_code.clone(),
+                                            batch_code_customized: true,
+                                        });
+                                        errors.set(Vec::new());
+                                    }
                                 },
-                                "编辑"
+                                "查看/编辑"
                             }
                             button {
                                 class: "button button-danger",
@@ -1311,20 +1643,20 @@ fn RoastProfilesPanel(
                                 onclick: {
                                     let profile_for_archive = item.clone();
                                     move |_| {
-                                    let current_pending = pending_archive();
-                                    if let Ok(pending) = begin_pending_archive(
-                                        &current_pending,
-                                        ArchiveTarget::RoastProfile { id: profile_for_archive.id.clone() },
-                                    ) {
-                                        pending_archive.set(Some(pending));
-                                        start_pending_archive_countdown(
-                                            app_state,
-                                            pending_archive,
-                                            store_id,
-                                            save_status,
-                                        );
+                                        let current_pending = pending_archive();
+                                        if let Ok(pending) = begin_pending_archive(
+                                            &current_pending,
+                                            ArchiveTarget::RoastProfile { id: profile_for_archive.id.clone() },
+                                        ) {
+                                            pending_archive.set(Some(pending));
+                                            start_pending_archive_countdown(
+                                                app_state,
+                                                pending_archive,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
                                     }
-                                }
                                 },
                                 "归档"
                             }
@@ -1334,7 +1666,7 @@ fn RoastProfilesPanel(
             }
         }
         section { class: "panel",
-            h2 { class: "panel-title", "烘焙品类表单" }
+            FormModeCard { title: profile_mode_title, hint: profile_mode_hint, editing: profile_is_editing }
             div { class: "grid",
                 div {
                     label { class: "field-label", "咖啡豆" }
@@ -1355,22 +1687,8 @@ fn RoastProfilesPanel(
                     FieldError { errors, field: "bean_id" }
                 }
                 div {
-                    label { class: "field-label", "烘焙方法" }
-                    select {
-                        class: "select-input",
-                        value: "{profile_form.read().method_id}",
-                        onchange: move |event| {
-                            profile_form.write().method_id = event.value();
-                            if !profile_form.read().batch_code_customized {
-                                refresh_profile_batch_code(app_state, profile_form);
-                            }
-                        },
-                        option { value: "", "请选择" }
-                        for method in state.roast_methods.iter().filter(|item| !item.archived) {
-                            option { value: "{method.id}", "{method.name}" }
-                        }
-                    }
-                    FieldError { errors, field: "method_id" }
+                    label { class: "field-label", "烘焙流程" }
+                    p { class: "section-helper", "系统默认使用标准曲线，不再单独维护烘焙方法。" }
                 }
                 div {
                     label { class: "field-label", "烘焙度" }
@@ -1457,8 +1775,17 @@ fn RoastProfilesPanel(
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
                         },
-                        "保存"
+                        "{submit_button_label(profile_is_editing)}"
                     }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        profile_form.set(RoastProfileFormState::default());
+                        errors.set(Vec::new());
+                    },
+                    "{secondary_button_label(profile_is_editing)}"
                 }
             }
         }
@@ -1476,10 +1803,31 @@ fn PlanCategoriesPanel(
     let archive_locked = !catalog_state::can_write_catalog(pending_archive().as_ref());
     let store_id: Signal<String> = use_context();
     let save_status: Signal<Option<String>> = use_context();
+    let category_is_editing = category_form.read().editing_id.is_some();
+    let category_mode_title = form_mode_title("方案分类", category_is_editing);
+    let category_mode_hint = form_mode_hint(
+        category_is_editing,
+        category_form.read().name.as_str(),
+        "填写分类名称后保存，即可新增一个冲煮方案分类。",
+    );
 
     rsx! {
         section { class: "panel",
-            h2 { class: "panel-title", "冲煮方案分类" }
+            div { class: "panel-head",
+                div { class: "panel-head-copy",
+                    h2 { class: "panel-title", "冲煮方案分类" }
+                    p { class: "section-helper", "列表用于查看已有分类；点击“查看/编辑”后，可在下方表单调整。" }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        category_form.set(PlanCategoryFormState::default());
+                        errors.set(Vec::new());
+                    },
+                    "新增分类"
+                }
+            }
             div { class: "list",
                 for item in state.brewing_plan_categories.iter() {
                     div { class: "list-item",
@@ -1493,14 +1841,14 @@ fn PlanCategoriesPanel(
                                 onclick: {
                                     let category_for_edit = item.clone();
                                     move |_| {
-                                    category_form.set(PlanCategoryFormState {
-                                        editing_id: Some(category_for_edit.id.clone()),
-                                        name: category_for_edit.name.clone(),
-                                    });
-                                    errors.set(Vec::new());
-                                }
+                                        category_form.set(PlanCategoryFormState {
+                                            editing_id: Some(category_for_edit.id.clone()),
+                                            name: category_for_edit.name.clone(),
+                                        });
+                                        errors.set(Vec::new());
+                                    }
                                 },
-                                "编辑"
+                                "查看/编辑"
                             }
                             button {
                                 class: "button button-danger",
@@ -1508,20 +1856,20 @@ fn PlanCategoriesPanel(
                                 onclick: {
                                     let category_for_archive = item.clone();
                                     move |_| {
-                                    let current_pending = pending_archive();
-                                    if let Ok(pending) = begin_pending_archive(
-                                        &current_pending,
-                                        ArchiveTarget::BrewingPlanCategory { id: category_for_archive.id.clone() },
-                                    ) {
-                                        pending_archive.set(Some(pending));
-                                        start_pending_archive_countdown(
-                                            app_state,
-                                            pending_archive,
-                                            store_id,
-                                            save_status,
-                                        );
+                                        let current_pending = pending_archive();
+                                        if let Ok(pending) = begin_pending_archive(
+                                            &current_pending,
+                                            ArchiveTarget::BrewingPlanCategory { id: category_for_archive.id.clone() },
+                                        ) {
+                                            pending_archive.set(Some(pending));
+                                            start_pending_archive_countdown(
+                                                app_state,
+                                                pending_archive,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
                                     }
-                                }
                                 },
                                 "归档"
                             }
@@ -1531,7 +1879,7 @@ fn PlanCategoriesPanel(
             }
         }
         section { class: "panel",
-            h2 { class: "panel-title", "分类表单" }
+            FormModeCard { title: category_mode_title, hint: category_mode_hint, editing: category_is_editing }
             div { class: "grid",
                 div {
                     label { class: "field-label", "分类名称" }
@@ -1567,7 +1915,7 @@ fn PlanCategoriesPanel(
                                 Err(validation_errors) => errors.set(validation_errors),
                             }
                         },
-                        "保存"
+                        "{submit_button_label(category_is_editing)}"
                     }
                     button {
                         class: "button button-secondary",
@@ -1576,7 +1924,7 @@ fn PlanCategoriesPanel(
                             category_form.set(PlanCategoryFormState::default());
                             errors.set(Vec::new());
                         },
-                        "清空"
+                        "{secondary_button_label(category_is_editing)}"
                     }
                 }
             }
@@ -1598,6 +1946,13 @@ fn BrewingPlansPanel(
     let store_id: Signal<String> = use_context();
     let save_status: Signal<Option<String>> = use_context();
     let category_id = plan_form.read().category_id.clone();
+    let plan_is_editing = plan_form.read().editing_id.is_some();
+    let plan_mode_title = form_mode_title("冲煮方案", plan_is_editing);
+    let plan_mode_hint = form_mode_hint(
+        plan_is_editing,
+        plan_form.read().name.as_str(),
+        "先选择分类，再填写方案参数与匹配属性后保存。",
+    );
 
     let grinders = state
         .grinder_profiles
@@ -1614,7 +1969,27 @@ fn BrewingPlansPanel(
 
     rsx! {
         section { class: "panel",
-            h2 { class: "panel-title", "冲煮方案列表" }
+            div { class: "panel-head",
+                div { class: "panel-head-copy",
+                    h2 { class: "panel-title", "冲煮方案列表" }
+                    p { class: "section-helper", "请先选择分类，再从列表中查看/编辑已有方案，或开始新增。" }
+                }
+                button {
+                    class: "button button-secondary button-small",
+                    disabled: archive_locked,
+                    onclick: move |_| {
+                        let current_category_id = plan_form.read().category_id.clone();
+                        plan_form.set(PlanFormState {
+                            category_id: current_category_id,
+                            ..PlanFormState::default()
+                        });
+                        plan_attr_kind.set(BrewingMatchKind::ProcessingMethod);
+                        plan_attr_option_id.set(String::new());
+                        errors.set(Vec::new());
+                    },
+                    "新增方案"
+                }
+            }
             div {
                 label { class: "field-label", "筛选分类" }
                 select {
@@ -1641,28 +2016,28 @@ fn BrewingPlansPanel(
                                     let selected_category_id = category_id.clone();
                                     let item = item.clone();
                                     move |_| {
-                                    plan_form.set(PlanFormState {
-                                        editing_id: Some(item.id.clone()),
-                                        category_id: selected_category_id.clone(),
-                                        name: item.name.clone(),
-                                        matching_attributes: item.matching_attributes.clone(),
-                                        pour_stages: item.parameters.pour_stages.to_string(),
-                                        dripper: item.parameters.dripper.clone(),
-                                        grinder_profile_id: item.parameters.grinder_profile_id.clone().unwrap_or_default(),
-                                        ratio_coffee: item.parameters.ratio.coffee.to_string(),
-                                        ratio_water: item.parameters.ratio.water.to_string(),
-                                        default_dose_g: item.parameters.default_dose_g.to_string(),
-                                        day0_grind_size: item.age_fitting.day0.grind_size.to_string(),
-                                        day0_water_temp_c: item.age_fitting.day0.water_temp_c.to_string(),
-                                        day14_grind_size: item.age_fitting.day14.grind_size.to_string(),
-                                        day14_water_temp_c: item.age_fitting.day14.water_temp_c.to_string(),
-                                        instructions: item.instructions.clone().unwrap_or_default(),
-                                        priority: item.priority.to_string(),
-                                    });
-                                    errors.set(Vec::new());
-                                }
+                                        plan_form.set(PlanFormState {
+                                            editing_id: Some(item.id.clone()),
+                                            category_id: selected_category_id.clone(),
+                                            name: item.name.clone(),
+                                            matching_attributes: item.matching_attributes.clone(),
+                                            pour_stages: item.parameters.pour_stages.to_string(),
+                                            dripper: item.parameters.dripper.clone(),
+                                            grinder_profile_id: item.parameters.grinder_profile_id.clone().unwrap_or_default(),
+                                            ratio_coffee: item.parameters.ratio.coffee.to_string(),
+                                            ratio_water: item.parameters.ratio.water.to_string(),
+                                            default_dose_g: item.parameters.default_dose_g.to_string(),
+                                            day0_grind_size: item.age_fitting.day0.grind_size.to_string(),
+                                            day0_water_temp_c: item.age_fitting.day0.water_temp_c.to_string(),
+                                            day14_grind_size: item.age_fitting.day14.grind_size.to_string(),
+                                            day14_water_temp_c: item.age_fitting.day14.water_temp_c.to_string(),
+                                            instructions: item.instructions.clone().unwrap_or_default(),
+                                            priority: item.priority.to_string(),
+                                        });
+                                        errors.set(Vec::new());
+                                    }
                                 },
-                                "编辑"
+                                "查看/编辑"
                             }
                             button {
                                 class: "button button-danger",
@@ -1671,23 +2046,23 @@ fn BrewingPlansPanel(
                                     let selected_category_id = category_id.clone();
                                     let item = item.clone();
                                     move |_| {
-                                    let current_pending = pending_archive();
-                                    if let Ok(pending) = begin_pending_archive(
-                                        &current_pending,
-                                        ArchiveTarget::BrewingPlan {
-                                            category_id: selected_category_id.clone(),
-                                            id: item.id.clone(),
-                                        },
-                                    ) {
-                                        pending_archive.set(Some(pending));
-                                        start_pending_archive_countdown(
-                                            app_state,
-                                            pending_archive,
-                                            store_id,
-                                            save_status,
-                                        );
+                                        let current_pending = pending_archive();
+                                        if let Ok(pending) = begin_pending_archive(
+                                            &current_pending,
+                                            ArchiveTarget::BrewingPlan {
+                                                category_id: selected_category_id.clone(),
+                                                id: item.id.clone(),
+                                            },
+                                        ) {
+                                            pending_archive.set(Some(pending));
+                                            start_pending_archive_countdown(
+                                                app_state,
+                                                pending_archive,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
                                     }
-                                }
                                 },
                                 "归档"
                             }
@@ -1697,7 +2072,7 @@ fn BrewingPlansPanel(
             }
         }
         section { class: "panel",
-            h2 { class: "panel-title", "冲煮方案表单" }
+            FormModeCard { title: plan_mode_title, hint: plan_mode_hint, editing: plan_is_editing }
             div { class: "grid",
                 div {
                     label { class: "field-label", "分类" }
@@ -1810,40 +2185,63 @@ fn BrewingPlansPanel(
                         disabled: archive_locked,
                         onclick: move |_| {
                             let input_form = plan_form.read().clone();
+                            let reset_category_id = input_form.category_id.clone();
                             match parse_plan_form_to_input(&input_form) {
                                 Ok(payload) => {
                                     let before_state = app_state.read().clone();
                                     let result = { let mut state = app_state.write(); upsert_brewing_plan(&mut state, &payload) };
                                     match result {
-                                    Ok(_) => {
-                                        plan_form.set(PlanFormState::default());
-                                        errors.set(Vec::new());
-                                        save_with_rollback(
-                                            app_state,
-                                            before_state,
-                                            store_id,
-                                            save_status,
-                                        );
-                                    }
-                                    Err(validation_errors) => errors.set(validation_errors),
+                                        Ok(_) => {
+                                            plan_form.set(PlanFormState {
+                                                category_id: reset_category_id,
+                                                ..PlanFormState::default()
+                                            });
+                                            plan_attr_kind.set(BrewingMatchKind::ProcessingMethod);
+                                            plan_attr_option_id.set(String::new());
+                                            errors.set(Vec::new());
+                                            save_with_rollback(
+                                                app_state,
+                                                before_state,
+                                                store_id,
+                                                save_status,
+                                            );
+                                        }
+                                        Err(validation_errors) => errors.set(validation_errors),
                                     }
                                 },
                                 Err(parse_errors) => errors.set(parse_errors),
                             }
                         },
-                        "保存"
+                        "{submit_button_label(plan_is_editing)}"
                     }
                     button {
                         class: "button button-secondary",
                         disabled: archive_locked,
                         onclick: move |_| {
-                            plan_form.set(PlanFormState::default());
+                            let current_category_id = plan_form.read().category_id.clone();
+                            plan_form.set(PlanFormState {
+                                category_id: current_category_id,
+                                ..PlanFormState::default()
+                            });
+                            plan_attr_kind.set(BrewingMatchKind::ProcessingMethod);
+                            plan_attr_option_id.set(String::new());
                             errors.set(Vec::new());
                         },
-                        "清空"
+                        "{secondary_button_label(plan_is_editing)}"
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn FormModeCard(title: String, hint: String, editing: bool) -> Element {
+    rsx! {
+        div {
+            class: if editing { "form-mode-card form-mode-editing" } else { "form-mode-card form-mode-creating" },
+            h2 { class: "panel-title", "{title}" }
+            p { class: "section-helper", "{hint}" }
         }
     }
 }
@@ -1929,7 +2327,7 @@ fn refresh_profile_batch_code(
         .iter()
         .find(|item| item.id == form_snapshot.method_id)
         .map(|item| item.name.as_str())
-        .unwrap_or("");
+        .unwrap_or(DEFAULT_ROAST_METHOD_NAME);
     let code = suggest_batch_code(bean_name, method_name, form_snapshot.product_line);
     profile_form.write().batch_code = code;
 }

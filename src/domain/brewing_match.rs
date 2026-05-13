@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
 
+use crate::domain::agtron::resolve_batch_roast_level_id;
 use crate::domain::models::{
-    AppState, BrewRatio, BrewingMatchKind, BrewingPlan, ProductLine, RoastBatch,
-    WaterQualityAdjustment,
+    AppState, BrewRatio, BrewingMatchKind, BrewingPlan, CoffeeBean, ProductLine, RoastBatch,
+    RoastProfile, WaterQualityAdjustment,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,22 +41,58 @@ pub struct BrewingRecommendation {
     pub pour_stages: u8,
 }
 
-pub fn resolve_batch_context(batch: &RoastBatch, state: &AppState) -> Option<BatchBrewingContext> {
-    let roast_profile = state
-        .roast_profiles
-        .iter()
-        .find(|profile| profile.id == batch.profile_id)?;
-    if roast_profile.product_line != ProductLine::PourOver {
+fn find_legacy_batch_profile<'a>(batch: &RoastBatch, state: &'a AppState) -> Option<&'a RoastProfile> {
+    if batch.profile_id.trim().is_empty() {
         return None;
     }
-    let bean = state
-        .beans
+    state
+        .roast_profiles
         .iter()
-        .find(|candidate| candidate.id == roast_profile.bean_id)?;
+        .find(|profile| profile.id == batch.profile_id)
+}
+
+pub fn resolve_batch_product_line(batch: &RoastBatch, state: &AppState) -> Option<ProductLine> {
+    batch
+        .product_line
+        .or_else(|| find_legacy_batch_profile(batch, state).map(|profile| profile.product_line))
+}
+
+pub fn resolve_batch_bean<'a>(batch: &RoastBatch, state: &'a AppState) -> Option<&'a CoffeeBean> {
+    let bean_id = if batch.bean_id.trim().is_empty() {
+        find_legacy_batch_profile(batch, state).map(|profile| profile.bean_id.as_str())
+    } else {
+        Some(batch.bean_id.as_str())
+    }?;
+    state.beans.iter().find(|candidate| candidate.id == bean_id)
+}
+
+pub fn resolve_batch_display_name(batch: &RoastBatch, state: &AppState) -> String {
+    match (
+        resolve_batch_bean(batch, state).map(|bean| bean.name.as_str()),
+        resolve_batch_product_line(batch, state),
+    ) {
+        (Some(bean_name), Some(ProductLine::PourOver)) => format!("{} 手冲", bean_name),
+        (Some(bean_name), Some(ProductLine::Espresso)) => format!("{} 意式", bean_name),
+        (Some(bean_name), None) => bean_name.to_string(),
+        _ => find_legacy_batch_profile(batch, state)
+            .map(|profile| profile.display_name.clone())
+            .unwrap_or_else(|| "未知批次".to_string()),
+    }
+}
+
+pub fn resolve_batch_espresso_note<'a>(batch: &RoastBatch, state: &'a AppState) -> Option<&'a str> {
+    find_legacy_batch_profile(batch, state).and_then(|profile| profile.espresso_note.as_deref())
+}
+
+pub fn resolve_batch_context(batch: &RoastBatch, state: &AppState) -> Option<BatchBrewingContext> {
+    if resolve_batch_product_line(batch, state)? != ProductLine::PourOver {
+        return None;
+    }
+    let bean = resolve_batch_bean(batch, state)?;
     Some(BatchBrewingContext {
         bean_variety_id: bean.variety_id.clone(),
         processing_method_id: bean.processing_method_id.clone(),
-        roast_level_id: roast_profile.roast_level_id.clone(),
+        roast_level_id: resolve_batch_roast_level_id(batch, state),
     })
 }
 
@@ -161,6 +198,12 @@ pub fn parse_roasted_at_utc(roasted_at: &str) -> Option<DateTime<Utc>> {
         .or_else(|| {
             chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M:%S")
                 .ok()
+                .map(|ndt| ndt.and_utc())
+        })
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(roasted_at, "%Y-%m-%d")
+                .ok()
+                .and_then(|date| date.and_hms_opt(0, 0, 0))
                 .map(|ndt| ndt.and_utc())
         })
 }
@@ -569,9 +612,15 @@ mod tests {
         let batch = RoastBatch {
             id: "batch-1".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::Espresso),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "ESP".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-ESP-001".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         };
@@ -643,6 +692,18 @@ mod tests {
         assert_eq!(dt.month(), 5);
         assert_eq!(dt.day(), 2);
         assert_eq!(dt.hour(), 8);
+        assert_eq!(dt.minute(), 0);
+    }
+
+    #[test]
+    fn parse_roasted_at_utc_parses_date_only_format() {
+        let parsed = parse_roasted_at_utc("2026-05-02");
+        assert!(parsed.is_some());
+        let dt = parsed.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 5);
+        assert_eq!(dt.day(), 2);
+        assert_eq!(dt.hour(), 0);
         assert_eq!(dt.minute(), 0);
     }
 
@@ -723,9 +784,15 @@ mod tests {
         let batch = RoastBatch {
             id: "batch-1".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some(roast_level_id.to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-001".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         };

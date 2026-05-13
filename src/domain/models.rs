@@ -159,10 +159,23 @@ fn default_capacity_g() -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RoastBatch {
     pub id: String,
+    #[serde(default)]
     pub profile_id: String,
+    #[serde(default)]
+    pub bean_id: String,
+    #[serde(default)]
+    pub product_line: Option<ProductLine>,
+    #[serde(default)]
+    pub roast_level_id: Option<String>,
+    #[serde(default)]
+    pub batch_code: String,
     pub roasted_at: String,
     pub batch_no: String,
     pub status: BatchStatus,
+    #[serde(default)]
+    pub agtron_score: Option<f32>,
+    #[serde(default)]
+    pub matched_roast_level_id: Option<String>,
     pub notes: Option<String>,
     #[serde(default = "default_capacity_g")]
     pub capacity_g: f32,

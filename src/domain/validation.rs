@@ -112,7 +112,7 @@ pub fn validate_app_state(state: &AppState) -> Result<(), Vec<ValidationError>> 
         &grinder_ids,
         &mut errors,
     );
-    validate_batches(state, &roast_profile_ids, &mut errors);
+    validate_batches(state, &bean_ids, &roast_profile_ids, &roast_level_ids, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -298,14 +298,53 @@ fn validate_brewing_plans(
 
 fn validate_batches(
     state: &AppState,
+    bean_ids: &HashSet<&str>,
     roast_profile_ids: &HashSet<&str>,
+    roast_level_ids: &HashSet<&str>,
     errors: &mut Vec<ValidationError>,
 ) {
     for batch in &state.batches {
-        if !roast_profile_ids.contains(batch.profile_id.as_str()) {
+        let has_batch_bean = !batch.bean_id.trim().is_empty();
+        let has_legacy_profile = !batch.profile_id.trim().is_empty();
+
+        if has_batch_bean {
+            if !bean_ids.contains(batch.bean_id.as_str()) {
+                errors.push(ValidationError::new(
+                    format!("batches[{}].bean_id", batch.id),
+                    format!("referenced bean_id {} does not exist", batch.bean_id),
+                ));
+            }
+        } else if has_legacy_profile {
+            if !roast_profile_ids.contains(batch.profile_id.as_str()) {
+                errors.push(ValidationError::new(
+                    format!("batches[{}].profile_id", batch.id),
+                    format!("referenced profile_id {} does not exist", batch.profile_id),
+                ));
+            }
+        } else {
             errors.push(ValidationError::new(
-                format!("batches[{}].profile_id", batch.id),
-                format!("referenced profile_id {} does not exist", batch.profile_id),
+                format!("batches[{}].bean_id", batch.id),
+                "batch must reference bean_id or profile_id",
+            ));
+        }
+
+        if let Some(roast_level_id) = batch.roast_level_id.as_deref()
+            && !roast_level_ids.contains(roast_level_id)
+        {
+            errors.push(ValidationError::new(
+                format!("batches[{}].roast_level_id", batch.id),
+                format!("referenced roast_level_id {} does not exist", roast_level_id),
+            ));
+        }
+        if let Some(matched_roast_level_id) = batch.matched_roast_level_id.as_deref()
+            && !roast_level_ids.contains(matched_roast_level_id)
+        {
+            errors.push(ValidationError::new(
+                format!("batches[{}].matched_roast_level_id", batch.id),
+                format!(
+                    "referenced matched_roast_level_id {} does not exist",
+                    matched_roast_level_id
+                ),
             ));
         }
         if batch.roasted_at.trim().is_empty() {

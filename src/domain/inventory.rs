@@ -1,7 +1,8 @@
 //! Inventory domain logic for batch creation and recommendation visibility.
 
+use crate::domain::agtron::match_roast_level;
 use crate::domain::batch_number::generate_batch_no;
-use crate::domain::models::{AppState, BatchStatus, RoastBatch};
+use crate::domain::models::{AppState, BatchStatus, ProductLine, RoastBatch};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchFormError {
@@ -20,38 +21,48 @@ impl BatchFormError {
 
 pub fn create_batches(
     state: &mut AppState,
-    profile_id: &str,
+    bean_id: &str,
+    product_line: ProductLine,
+    roast_level_id: Option<&str>,
+    batch_code: &str,
     roasted_at: &str,
     count: u32,
+    agtron_score: Option<f32>,
     notes: Option<&str>,
 ) -> Result<Vec<String>, Vec<BatchFormError>> {
     let mut errors = Vec::new();
 
-    let profile = state
-        .roast_profiles
+    let bean_id = bean_id.trim();
+    let batch_code = batch_code.trim();
+    let roast_level_id = roast_level_id.map(str::trim).filter(|value| !value.is_empty());
+
+    let bean_exists = state
+        .beans
         .iter()
-        .find(|profile| profile.id == profile_id && !profile.archived);
-    if profile.is_none() {
-        errors.push(BatchFormError::new("profile_id", "请选择有效的烘焙品类"));
+        .any(|bean| bean.id == bean_id && !bean.archived);
+    if !bean_exists {
+        errors.push(BatchFormError::new("bean_id", "请选择有效的咖啡豆"));
+    }
+
+    if let Some(level_id) = roast_level_id
+        && !state
+            .coffee_parameters
+            .roast_levels
+            .iter()
+            .any(|level| level.id == level_id && !level.archived)
+    {
+        errors.push(BatchFormError::new("roast_level_id", "请选择有效的烘焙度"));
+    }
+
+    if batch_code.is_empty() {
+        errors.push(BatchFormError::new("batch_code", "请填写批次编码"));
     }
 
     if count == 0 {
         errors.push(BatchFormError::new("count", "批次数量必须大于 0"));
     }
 
-    let parsed = chrono::DateTime::parse_from_rfc3339(roasted_at)
-        .ok()
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M")
-                .ok()
-                .map(|ndt| ndt.and_utc().fixed_offset())
-        })
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M:%S")
-                .ok()
-                .map(|ndt| ndt.and_utc().fixed_offset())
-        });
-    let date = parsed.map(|dt| dt.date_naive());
+    let date = parse_roasted_on_date(roasted_at);
     if date.is_none() {
         errors.push(BatchFormError::new(
             "roasted_at",
@@ -59,14 +70,28 @@ pub fn create_batches(
         ));
     }
 
+    let matched_roast_level_id = if let Some(score) = agtron_score {
+        match match_roast_level(score, &state.coffee_parameters.roast_levels) {
+            Some(level) => Some(level.id.clone()),
+            None => {
+                errors.push(BatchFormError::new(
+                    "agtron_score",
+                    "未找到匹配的烘焙度，请检查参数目录中的 Agtron 范围",
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if !errors.is_empty() {
         return Err(errors);
     }
 
-    let profile = profile.expect("profile validated above");
     let date = date.expect("date validated above");
-    let batch_code = &profile.batch_code;
     let notes_owned = notes.map(|value| value.to_string());
+    let roast_level_id_owned = roast_level_id.map(str::to_string);
     let mut created_ids = Vec::new();
 
     for _ in 0..count {
@@ -74,10 +99,16 @@ pub fn create_batches(
         let batch_no = generate_batch_no(date, batch_code, &state.batches);
         let batch = RoastBatch {
             id: next_id.clone(),
-            profile_id: profile_id.to_string(),
+            profile_id: String::new(),
+            bean_id: bean_id.to_string(),
+            product_line: Some(product_line),
+            roast_level_id: roast_level_id_owned.clone(),
+            batch_code: batch_code.to_string(),
             roasted_at: roasted_at.to_string(),
             batch_no,
             status: BatchStatus::Active,
+            agtron_score,
+            matched_roast_level_id: matched_roast_level_id.clone(),
             notes: notes_owned.clone(),
             capacity_g: 100.0,
         };
@@ -100,6 +131,23 @@ pub fn visible_recommendation_batches(state: &AppState) -> Vec<&RoastBatch> {
             .then(left.batch_no.cmp(&right.batch_no))
     });
     visible
+}
+
+fn parse_roasted_on_date(roasted_at: &str) -> Option<chrono::NaiveDate> {
+    chrono::DateTime::parse_from_rfc3339(roasted_at)
+        .ok()
+        .map(|dt| dt.date_naive())
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M")
+                .ok()
+                .map(|ndt| ndt.date())
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(roasted_at, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|ndt| ndt.date())
+        })
+        .or_else(|| chrono::NaiveDate::parse_from_str(roasted_at, "%Y-%m-%d").ok())
 }
 
 fn next_batch_id(batches: &[RoastBatch]) -> String {
@@ -160,8 +208,18 @@ mod tests {
         let mut state = valid_state_with_profile();
         let roasted_at = "2026-05-02T08:00:00+00:00";
 
-        let ids =
-            create_batches(&mut state, "profile-1", roasted_at, 3, None).expect("should succeed");
+        let ids = create_batches(
+            &mut state,
+            "bean-1",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
+            roasted_at,
+            3,
+            None,
+            None,
+        )
+        .expect("should succeed");
 
         assert_eq!(ids.len(), 3);
         assert_eq!(state.batches.len(), 3);
@@ -176,9 +234,13 @@ mod tests {
 
         let errors = create_batches(
             &mut state,
-            "profile-1",
+            "bean-1",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
             "2026-05-02T08:00:00+00:00",
             0,
+            None,
             None,
         )
         .expect_err("should reject zero count");
@@ -190,21 +252,25 @@ mod tests {
     }
 
     #[test]
-    fn create_batches_rejects_invalid_profile_id() {
+    fn create_batches_rejects_invalid_bean_id() {
         let mut state = valid_state_with_profile();
 
         let errors = create_batches(
             &mut state,
-            "invalid-profile",
+            "invalid-bean",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
             "2026-05-02T08:00:00+00:00",
             1,
             None,
+            None,
         )
-        .expect_err("should reject invalid profile");
+        .expect_err("should reject invalid bean");
 
         assert_eq!(
             errors,
-            vec![BatchFormError::new("profile_id", "请选择有效的烘焙品类")]
+            vec![BatchFormError::new("bean_id", "请选择有效的咖啡豆")]
         );
     }
 
@@ -214,27 +280,45 @@ mod tests {
         state.batches.push(RoastBatch {
             id: "batch-active".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-001".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
         state.batches.push(RoastBatch {
             id: "batch-used".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-002".to_string(),
             status: BatchStatus::UsedUp,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
         state.batches.push(RoastBatch {
             id: "batch-archived".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-003".to_string(),
             status: BatchStatus::Archived,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
@@ -250,9 +334,13 @@ mod tests {
         let mut state = valid_state_with_profile();
         create_batches(
             &mut state,
-            "profile-1",
+            "bean-1",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
             "2026-05-02T08:00:00+00:00",
             3,
+            None,
             None,
         )
         .expect("should succeed");
@@ -267,9 +355,13 @@ mod tests {
         let mut state = valid_state_with_profile();
         create_batches(
             &mut state,
-            "profile-1",
+            "bean-1",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
             "2026-05-02T08:00:00+00:00",
             1,
+            None,
             None,
         )
         .expect("should succeed");
@@ -283,8 +375,18 @@ mod tests {
         let mut state = valid_state_with_profile();
         let roasted_at = "2026-05-02T08:00";
 
-        let ids = create_batches(&mut state, "profile-1", roasted_at, 1, None)
-            .expect("should accept datetime-local format");
+        let ids = create_batches(
+            &mut state,
+            "bean-1",
+            ProductLine::PourOver,
+            Some("roast-level-light"),
+            "TEST",
+            roasted_at,
+            1,
+            None,
+            None,
+        )
+        .expect("should accept datetime-local format");
 
         assert_eq!(ids.len(), 1);
         assert_eq!(state.batches[0].batch_no, "20260502-TEST-001");
@@ -296,27 +398,45 @@ mod tests {
         state.batches.push(RoastBatch {
             id: "batch-b".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-03T08:00:00Z".to_string(),
             batch_no: "20260503-TEST-002".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
         state.batches.push(RoastBatch {
             id: "batch-a".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-03T08:00:00Z".to_string(),
             batch_no: "20260503-TEST-001".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
         state.batches.push(RoastBatch {
             id: "batch-c".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-001".to_string(),
             status: BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });

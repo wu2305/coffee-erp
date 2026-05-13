@@ -1,3 +1,4 @@
+use crate::domain::agtron::roast_level_bounds;
 use crate::domain::models::{
     AppState, BrewRatio, BrewingAgeEndpoint, BrewingAgeFitting, BrewingMatchAttribute,
     BrewingMatchKind, BrewingPlan, BrewingPlanCategory, BrewingPlanParameters, CatalogOption,
@@ -26,7 +27,8 @@ pub struct CatalogOptionFormInput {
 pub struct RoastLevelFormInput {
     pub editing_id: Option<String>,
     pub label: String,
-    pub agtron_range: String,
+    pub agtron_min: String,
+    pub agtron_max: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -148,6 +150,9 @@ pub enum ArchiveCommitError {
     TargetNotFound,
 }
 
+pub const DEFAULT_ROAST_METHOD_ID: &str = "roast-method-default";
+pub const DEFAULT_ROAST_METHOD_NAME: &str = "标准曲线";
+
 pub fn suggest_batch_code(bean_name: &str, method_name: &str, product_line: ProductLine) -> String {
     let bean_prefix = alnum_prefix(bean_name, 2);
     let method_prefix = alnum_prefix(method_name, 2);
@@ -216,10 +221,6 @@ pub fn upsert_roast_level_option(
     if label.is_empty() {
         errors.push(form_error("label", "标签不能为空"));
     }
-    let agtron_range = input.agtron_range.trim();
-    if agtron_range.is_empty() {
-        errors.push(form_error("agtron_range", "Agtron 范围不能为空"));
-    }
     if !label.is_empty()
         && has_duplicate_roast_level_label(
             &state.coffee_parameters.roast_levels,
@@ -229,9 +230,33 @@ pub fn upsert_roast_level_option(
     {
         errors.push(form_error("label", "未归档标签不能重复"));
     }
+
+    let agtron_min = parse_agtron_bound_input(&input.agtron_min, "agtron_min", "下界", true, &mut errors);
+    let agtron_max = parse_agtron_bound_input(&input.agtron_max, "agtron_max", "上界", false, &mut errors);
+
+    if let (Some(min), Some(max)) = (agtron_min, agtron_max)
+        && min > max
+    {
+        errors.push(form_error("agtron_max", "上界不能小于下界"));
+    }
+
+    if let Some(min) = agtron_min
+        && has_duplicate_roast_level_range(
+            &state.coffee_parameters.roast_levels,
+            Some(min),
+            agtron_max,
+            input.editing_id.as_deref(),
+        )
+    {
+        errors.push(form_error("agtron_max", "该 Agtron 范围已存在，请调整上下界"));
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
+
+    let agtron_min = agtron_min.expect("agtron lower bound should exist after validation");
+    let agtron_range = build_agtron_range(agtron_min, agtron_max);
 
     if let Some(editing_id) = input.editing_id.as_deref() {
         let Some(item) = state
@@ -243,7 +268,9 @@ pub fn upsert_roast_level_option(
             return Err(vec![form_error("editing_id", "未找到要更新的烘焙度")]);
         };
         item.label = label.to_string();
-        item.agtron_range = agtron_range.to_string();
+        item.agtron_range = agtron_range;
+        item.agtron_min = Some(agtron_min);
+        item.agtron_max = agtron_max;
         return Ok(item.id.clone());
     }
 
@@ -259,9 +286,9 @@ pub fn upsert_roast_level_option(
     state.coffee_parameters.roast_levels.push(RoastLevelOption {
         id: id.clone(),
         label: label.to_string(),
-        agtron_range: agtron_range.to_string(),
-        agtron_min: None,
-        agtron_max: None,
+        agtron_range,
+        agtron_min: Some(agtron_min),
+        agtron_max,
         sort_order: next_sort_order,
         archived: false,
     });
@@ -370,9 +397,10 @@ pub fn upsert_roast_profile(
         errors.push(form_error("bean_id", "咖啡豆不存在或已归档"));
     }
 
-    if input.method_id.trim().is_empty() {
-        errors.push(form_error("method_id", "请选择烘焙方法"));
-    } else if !contains_active_roast_method(state, &input.method_id) {
+    let method_id = normalize_optional_id(Some(input.method_id.as_str()));
+    if let Some(method_id) = method_id.as_deref()
+        && !contains_active_roast_method(state, method_id)
+    {
         errors.push(form_error("method_id", "烘焙方法不存在或已归档"));
     }
 
@@ -392,15 +420,9 @@ pub fn upsert_roast_profile(
         .beans
         .iter()
         .find(|bean| bean.id == input.bean_id)
-        .map(|bean| bean.name.as_str())
-        .unwrap_or("");
-    let method_name = state
-        .roast_methods
-        .iter()
-        .find(|method| method.id == input.method_id)
-        .map(|method| method.name.as_str())
-        .unwrap_or("");
-    if bean_name.is_empty() || method_name.is_empty() {
+        .map(|bean| bean.name.clone())
+        .unwrap_or_default();
+    if bean_name.is_empty() {
         errors.push(form_error("display_name", "无法生成烘焙品类名称"));
     }
 
@@ -408,12 +430,9 @@ pub fn upsert_roast_profile(
         return Err(errors);
     }
 
-    let display_name = format!(
-        "{} {} {}",
-        bean_name,
-        method_name,
-        product_line_label(input.product_line)
-    );
+    let method_id = method_id.unwrap_or_else(|| ensure_default_roast_method(state));
+    let method_name = resolve_roast_method_name(state, &method_id);
+    let display_name = build_roast_profile_display_name(&bean_name, method_name, input.product_line);
 
     if let Some(editing_id) = input.editing_id.as_deref() {
         let Some(profile) = state
@@ -424,7 +443,7 @@ pub fn upsert_roast_profile(
             return Err(vec![form_error("editing_id", "未找到要更新的烘焙品类")]);
         };
         profile.bean_id = input.bean_id.clone();
-        profile.method_id = input.method_id.clone();
+        profile.method_id = method_id;
         profile.roast_level_id = roast_level_id;
         profile.product_line = input.product_line;
         profile.display_name = display_name;
@@ -439,7 +458,7 @@ pub fn upsert_roast_profile(
     state.roast_profiles.push(RoastProfile {
         id: id.clone(),
         bean_id: input.bean_id.clone(),
-        method_id: input.method_id.clone(),
+        method_id,
         roast_level_id,
         product_line: input.product_line,
         display_name,
@@ -829,6 +848,65 @@ fn has_duplicate_roast_level_label(
         .any(|item| item.label == label && Some(item.id.as_str()) != ignore_id)
 }
 
+fn has_duplicate_roast_level_range(
+    items: &[RoastLevelOption],
+    min: Option<f32>,
+    max: Option<f32>,
+    ignore_id: Option<&str>,
+) -> bool {
+    items
+        .iter()
+        .filter(|item| !item.archived)
+        .filter(|item| Some(item.id.as_str()) != ignore_id)
+        .filter_map(|item| roast_level_bounds(item).map(|bounds| (item.id.as_str(), bounds)))
+        .any(|(_, bounds)| bounds == (min, max))
+}
+
+fn parse_agtron_bound_input(
+    raw: &str,
+    field: &str,
+    label: &str,
+    required: bool,
+    errors: &mut Vec<FormValidationError>,
+) -> Option<f32> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        if required {
+            errors.push(form_error(field, &format!("Agtron {label}不能为空")));
+        }
+        return None;
+    }
+
+    let Ok(value) = trimmed.parse::<f32>() else {
+        errors.push(form_error(field, &format!("Agtron {label}请输入数字")));
+        return None;
+    };
+
+    if !value.is_finite() || !(1.0..=150.0).contains(&value) {
+        errors.push(form_error(field, &format!("Agtron {label}需在 1-150 之间")));
+        return None;
+    }
+
+    Some(value)
+}
+
+fn build_agtron_range(min: f32, max: Option<f32>) -> String {
+    match max {
+        Some(max) if (min - max).abs() < f32::EPSILON => format_agtron_value(min),
+        Some(max) => format!("{}-{}", format_agtron_value(min), format_agtron_value(max)),
+        None => format!("{}+", format_agtron_value(min)),
+    }
+}
+
+fn format_agtron_value(value: f32) -> String {
+    let rounded = (value * 10.0).round() / 10.0;
+    if (rounded.fract()).abs() < f32::EPSILON {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.1}")
+    }
+}
+
 fn next_sort_order_roast_level(items: &[RoastLevelOption]) -> u32 {
     items.iter().map(|item| item.sort_order).max().unwrap_or(0) + 1
 }
@@ -1057,6 +1135,45 @@ fn lookup_batch_label(state: &AppState, id: &str, prefix: &str) -> String {
     format!("{prefix}：{label}")
 }
 
+fn ensure_default_roast_method(state: &mut AppState) -> String {
+    if let Some(method) = state
+        .roast_methods
+        .iter()
+        .find(|item| item.id == DEFAULT_ROAST_METHOD_ID && !item.archived)
+    {
+        return method.id.clone();
+    }
+
+    state.roast_methods.push(RoastMethod {
+        id: DEFAULT_ROAST_METHOD_ID.to_string(),
+        name: DEFAULT_ROAST_METHOD_NAME.to_string(),
+        notes: Some("系统默认烘焙流程".to_string()),
+        archived: false,
+    });
+    DEFAULT_ROAST_METHOD_ID.to_string()
+}
+
+fn resolve_roast_method_name<'a>(state: &'a AppState, method_id: &str) -> &'a str {
+    state
+        .roast_methods
+        .iter()
+        .find(|item| item.id == method_id)
+        .map(|item| item.name.as_str())
+        .unwrap_or(DEFAULT_ROAST_METHOD_NAME)
+}
+
+fn build_roast_profile_display_name(
+    bean_name: &str,
+    method_name: &str,
+    product_line: ProductLine,
+) -> String {
+    if method_name == DEFAULT_ROAST_METHOD_NAME {
+        format!("{} {}", bean_name, product_line_label(product_line))
+    } else {
+        format!("{} {} {}", bean_name, method_name, product_line_label(product_line))
+    }
+}
+
 fn product_line_label(product_line: ProductLine) -> &'static str {
     match product_line {
         ProductLine::PourOver => "手冲",
@@ -1200,7 +1317,8 @@ mod tests {
             &RoastLevelFormInput {
                 editing_id: None,
                 label: "超浅".to_string(),
-                agtron_range: "96+".to_string(),
+                agtron_min: "96".to_string(),
+                agtron_max: String::new(),
             },
         )
         .expect("roast level create should succeed");
@@ -1229,6 +1347,33 @@ mod tests {
                 .copied(),
             Some("超浅")
         );
+        let created_level = state
+            .coffee_parameters
+            .roast_levels
+            .iter()
+            .find(|item| item.id == roast_level_id)
+            .expect("created roast level should exist");
+        assert_eq!(created_level.agtron_min, Some(96.0));
+        assert_eq!(created_level.agtron_max, None);
+    }
+
+    #[test]
+    fn upsert_roast_level_rejects_duplicate_range() {
+        let mut state = seed_app_state();
+        let errors = upsert_roast_level_option(
+            &mut state,
+            &RoastLevelFormInput {
+                editing_id: None,
+                label: "重复浅烘".to_string(),
+                agtron_min: "90".to_string(),
+                agtron_max: "95".to_string(),
+            },
+        )
+        .expect_err("duplicate roast level range should fail");
+
+        assert!(errors
+            .iter()
+            .any(|error| error.field == "agtron_max" && error.message.contains("已存在")));
     }
 
     #[test]
@@ -1502,9 +1647,15 @@ mod tests {
         state.batches.push(crate::domain::models::RoastBatch {
             id: "batch-usedup-test".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-001".to_string(),
             status: crate::domain::models::BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
@@ -1530,9 +1681,15 @@ mod tests {
         state.batches.push(crate::domain::models::RoastBatch {
             id: "batch-archive-test".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-002".to_string(),
             status: crate::domain::models::BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
@@ -1569,9 +1726,15 @@ mod tests {
         state.batches.push(crate::domain::models::RoastBatch {
             id: "batch-001".to_string(),
             profile_id: "profile-1".to_string(),
+            bean_id: "bean-1".to_string(),
+            product_line: Some(ProductLine::PourOver),
+            roast_level_id: Some("roast-level-light".to_string()),
+            batch_code: "TEST".to_string(),
             roasted_at: "2026-05-02T08:00:00Z".to_string(),
             batch_no: "20260502-TEST-001".to_string(),
             status: crate::domain::models::BatchStatus::Active,
+            agtron_score: None,
+            matched_roast_level_id: None,
             notes: None,
             capacity_g: 100.0,
         });
