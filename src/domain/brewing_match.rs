@@ -41,7 +41,10 @@ pub struct BrewingRecommendation {
     pub pour_stages: u8,
 }
 
-fn find_legacy_batch_profile<'a>(batch: &RoastBatch, state: &'a AppState) -> Option<&'a RoastProfile> {
+fn find_legacy_batch_profile<'a>(
+    batch: &RoastBatch,
+    state: &'a AppState,
+) -> Option<&'a RoastProfile> {
     if batch.profile_id.trim().is_empty() {
         return None;
     }
@@ -92,7 +95,7 @@ pub fn resolve_batch_context(batch: &RoastBatch, state: &AppState) -> Option<Bat
     Some(BatchBrewingContext {
         bean_variety_id: bean.variety_id.clone(),
         processing_method_id: bean.processing_method_id.clone(),
-        roast_level_id: resolve_batch_roast_level_id(batch, state),
+        roast_level_id: resolve_batch_roast_level_id(batch, state).map(str::to_string),
     })
 }
 

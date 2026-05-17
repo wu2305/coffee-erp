@@ -14,8 +14,8 @@ use crate::ui::inventory_page::InventoryPage;
 use crate::ui::today_page::TodayPage;
 use catalog_state::{
     ArchiveTarget, BrewingPlanCategoryFormInput, BrewingPlanFormInput, CatalogOptionFormInput,
-    CoffeeBeanFormInput, FormValidationError, ParameterCatalog, PendingArchive,
-    RoastLevelFormInput, RoastMethodFormInput, RoastProfileFormInput, DEFAULT_ROAST_METHOD_NAME,
+    CoffeeBeanFormInput, DEFAULT_ROAST_METHOD_NAME, FormValidationError, ParameterCatalog,
+    PendingArchive, RoastLevelFormInput, RoastMethodFormInput, RoastProfileFormInput,
     add_matching_attribute, begin_pending_archive, cancel_pending_archive, commit_pending_archive,
     pending_archive_label, remove_matching_attribute, suggest_batch_code, upsert_brewing_plan,
     upsert_brewing_plan_category, upsert_coffee_bean, upsert_parameter_option,
@@ -608,11 +608,7 @@ const fn submit_button_label(editing: bool) -> &'static str {
 }
 
 const fn secondary_button_label(editing: bool) -> &'static str {
-    if editing {
-        "取消编辑"
-    } else {
-        "清空"
-    }
+    if editing { "取消编辑" } else { "清空" }
 }
 
 fn format_agtron_form_value(value: Option<f32>) -> String {
@@ -1301,15 +1297,20 @@ fn BeansPanel(
                                 class: "button button-secondary",
                                 disabled: archive_locked,
                                 onclick: {
-                                    let bean_for_edit = bean.clone();
+                                    let editing_id = bean.id.clone();
+                                    let name = bean.name.clone();
+                                    let variety_id = bean.variety_id.clone().unwrap_or_default();
+                                    let processing_method_id = bean.processing_method_id.clone().unwrap_or_default();
+                                    let origin = bean.origin.clone().unwrap_or_default();
+                                    let notes = bean.notes.clone().unwrap_or_default();
                                     move |_| {
                                         bean_form.set(BeanFormState {
-                                            editing_id: Some(bean_for_edit.id.clone()),
-                                            name: bean_for_edit.name.clone(),
-                                            variety_id: bean_for_edit.variety_id.clone().unwrap_or_default(),
-                                            processing_method_id: bean_for_edit.processing_method_id.clone().unwrap_or_default(),
-                                            origin: bean_for_edit.origin.clone().unwrap_or_default(),
-                                            notes: bean_for_edit.notes.clone().unwrap_or_default(),
+                                            editing_id: Some(editing_id.clone()),
+                                            name: name.clone(),
+                                            variety_id: variety_id.clone(),
+                                            processing_method_id: processing_method_id.clone(),
+                                            origin: origin.clone(),
+                                            notes: notes.clone(),
                                         });
                                         errors.set(Vec::new());
                                     }
@@ -1320,12 +1321,12 @@ fn BeansPanel(
                                 class: "button button-danger",
                                 disabled: archive_locked,
                                 onclick: {
-                                    let bean_for_archive = bean.clone();
+                                    let bean_id = bean.id.clone();
                                     move |_| {
                                         let current_pending = pending_archive();
                                         if let Ok(pending) = begin_pending_archive(
                                             &current_pending,
-                                            ArchiveTarget::CoffeeBean { id: bean_for_archive.id.clone() }
+                                            ArchiveTarget::CoffeeBean { id: bean_id.clone() }
                                         ) {
                                             pending_archive.set(Some(pending));
                                             start_pending_archive_countdown(
@@ -1621,15 +1622,20 @@ fn RoastProfilesPanel(
                                 class: "button button-secondary",
                                 disabled: archive_locked,
                                 onclick: {
-                                    let profile_for_edit = item.clone();
+                                    let editing_id = item.id.clone();
+                                    let bean_id = item.bean_id.clone();
+                                    let method_id = item.method_id.clone();
+                                    let roast_level_id = item.roast_level_id.clone().unwrap_or_default();
+                                    let product_line = item.product_line;
+                                    let batch_code = item.batch_code.clone();
                                     move |_| {
                                         profile_form.set(RoastProfileFormState {
-                                            editing_id: Some(profile_for_edit.id.clone()),
-                                            bean_id: profile_for_edit.bean_id.clone(),
-                                            method_id: profile_for_edit.method_id.clone(),
-                                            roast_level_id: profile_for_edit.roast_level_id.clone().unwrap_or_default(),
-                                            product_line: profile_for_edit.product_line,
-                                            batch_code: profile_for_edit.batch_code.clone(),
+                                            editing_id: Some(editing_id.clone()),
+                                            bean_id: bean_id.clone(),
+                                            method_id: method_id.clone(),
+                                            roast_level_id: roast_level_id.clone(),
+                                            product_line,
+                                            batch_code: batch_code.clone(),
                                             batch_code_customized: true,
                                         });
                                         errors.set(Vec::new());
@@ -1641,12 +1647,12 @@ fn RoastProfilesPanel(
                                 class: "button button-danger",
                                 disabled: archive_locked,
                                 onclick: {
-                                    let profile_for_archive = item.clone();
+                                    let profile_id = item.id.clone();
                                     move |_| {
                                         let current_pending = pending_archive();
                                         if let Ok(pending) = begin_pending_archive(
                                             &current_pending,
-                                            ArchiveTarget::RoastProfile { id: profile_for_archive.id.clone() },
+                                            ArchiveTarget::RoastProfile { id: profile_id.clone() },
                                         ) {
                                             pending_archive.set(Some(pending));
                                             start_pending_archive_countdown(

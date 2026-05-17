@@ -8,6 +8,7 @@ pub fn generate_batch_no(
     existing_batches: &[RoastBatch],
 ) -> String {
     let date_prefix = date.format("%Y%m%d").to_string();
+    let batch_code = normalize_batch_code(batch_code);
     let max_sequence = existing_batches
         .iter()
         .filter_map(|batch| parse_sequence_if_same_date(&batch.batch_no, &date_prefix))
@@ -15,6 +16,15 @@ pub fn generate_batch_no(
         .unwrap_or(0);
     let next_sequence = max_sequence + 1;
     format!("{date_prefix}-{batch_code}-{next_sequence:03}")
+}
+
+pub fn normalize_batch_code(batch_code: &str) -> String {
+    batch_code
+        .trim()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || is_cjk(*ch))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
 }
 
 fn parse_sequence_if_same_date(batch_no: &str, date_prefix: &str) -> Option<u32> {
@@ -26,6 +36,19 @@ fn parse_sequence_if_same_date(batch_no: &str, date_prefix: &str) -> Option<u32>
         return None;
     }
     sequence_part.parse::<u32>().ok()
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{2A6DF}'
+            | '\u{2A700}'..='\u{2B73F}'
+            | '\u{2B740}'..='\u{2B81F}'
+            | '\u{2B820}'..='\u{2CEAF}'
+    )
 }
 
 #[cfg(test)]
@@ -65,6 +88,15 @@ mod tests {
         existing.push(batch(&second));
         let third = generate_batch_no(date, "ESP", &existing);
         assert_eq!(third, "20260502-ESP-003");
+    }
+
+    #[test]
+    fn generate_batch_no_normalizes_batch_code_for_stable_parsing() {
+        let date = NaiveDate::from_ymd_opt(2026, 5, 2).expect("valid date");
+
+        let next = generate_batch_no(date, " 耶加-浅 po ", &[]);
+
+        assert_eq!(next, "20260502-耶加浅PO-001");
     }
 
     fn batch(batch_no: &str) -> RoastBatch {

@@ -10,7 +10,7 @@
 | Worker 默认域名 | `https://coffee-erp-worker.gdindex.workers.dev` | 仅作为回退和排障入口，不作为前端默认配置 |
 | Cloudflare Pages 主站 | `https://coffee-erp.pages.dev` | 海外主静态站 |
 | Cloudflare Pages 自定义域名 | `https://coffee-erp.581006.xyz` | 绑定到 Cloudflare Pages 项目 `coffee-erp` |
-| Cloudflare Pages 当前预览 | `https://cc970e74.coffee-erp.pages.dev` | 最近一次手动发布产生的预览地址 |
+| Cloudflare Pages 当前预览 | `https://5e6f6b26.coffee-erp.pages.dev` | 最近一次手动发布产生的预览地址 |
 | EdgeOne Pages 主站 | `https://coffee-erp.cic.cab` | 中国大陆访问优先入口，仅托管静态资源 |
 | EdgeOne 项目 ID | `pages-6cfhtul7ttt7` | EdgeOne Pages 项目 |
 | Cloudflare KV namespace ID | `55de722cbd614f9c9814eb791a528f0c` | Worker 生产 KV 绑定目标 |
@@ -71,7 +71,7 @@ id = "55de722cbd614f9c9814eb791a528f0c"
 
 [vars]
 STORE_ID_SEED = "store-default"
-ALLOWED_ORIGINS = "https://coffee-erp.pages.dev,https://coffee-erp.581006.xyz,https://cc970e74.coffee-erp.pages.dev,https://coffee-erp.cic.cab"
+ALLOWED_ORIGINS = "https://coffee-erp.pages.dev,https://coffee-erp.581006.xyz,https://5e6f6b26.coffee-erp.pages.dev,https://coffee-erp.cic.cab"
 ```
 
 如果保留旧预览域名，也可以临时把旧预览加入 `ALLOWED_ORIGINS`。确认不再使用后应移除，避免 CORS 白名单长期膨胀。
@@ -134,7 +134,7 @@ pnpm dlx wrangler pages deploy target/dx/coffee-erp/release/web/public --project
 预期：
 
 - `https://coffee-erp.pages.dev` 更新。
-- 命令输出新的预览 URL，例如 `https://cc970e74.coffee-erp.pages.dev`。
+- 命令输出新的预览 URL，例如 `https://5e6f6b26.coffee-erp.pages.dev`。
 - 如果预览 URL 需要访问 API，必须把该预览域名加入 Worker `ALLOWED_ORIGINS` 并重新部署 Worker。
 
 ### 5.4 部署 EdgeOne Pages
@@ -204,7 +204,7 @@ NODE
 ```bash
 curl -I https://coffee-erp.pages.dev
 curl -I https://coffee-erp.581006.xyz
-curl -I https://cc970e74.coffee-erp.pages.dev
+curl -I https://5e6f6b26.coffee-erp.pages.dev
 curl -I https://coffee-erp.cic.cab
 ```
 

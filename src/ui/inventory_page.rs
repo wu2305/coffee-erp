@@ -8,7 +8,7 @@ use crate::domain::inventory::{BatchFormError, create_batches};
 use crate::domain::models::{AppState, BatchStatus, ProductLine, RoastBatch};
 use crate::ui::catalog_state::{
     ArchiveTarget, PendingArchive, begin_pending_archive, cancel_pending_archive,
-    commit_pending_archive, pending_archive_label, suggest_batch_code, DEFAULT_ROAST_METHOD_NAME,
+    commit_pending_archive, pending_archive_label, suggest_inventory_batch_code,
 };
 use crate::ui::save_with_rollback;
 
@@ -16,7 +16,6 @@ use crate::ui::save_with_rollback;
 pub struct InventoryFormState {
     pub bean_id: String,
     pub product_line: ProductLine,
-    pub roast_level_id: String,
     pub batch_code: String,
     pub batch_code_customized: bool,
     pub roasted_at: String,
@@ -30,7 +29,6 @@ impl Default for InventoryFormState {
         Self {
             bean_id: String::new(),
             product_line: ProductLine::PourOver,
-            roast_level_id: String::new(),
             batch_code: String::new(),
             batch_code_customized: false,
             roasted_at: today_local_date(),
@@ -101,11 +99,8 @@ pub fn InventoryPage(
         None => rsx! {},
     };
 
-    let beans: Vec<&crate::domain::models::CoffeeBean> = state
-        .beans
-        .iter()
-        .filter(|bean| !bean.archived)
-        .collect();
+    let beans: Vec<&crate::domain::models::CoffeeBean> =
+        state.beans.iter().filter(|bean| !bean.archived).collect();
 
     let mut sorted_batches: Vec<&RoastBatch> = state.batches.iter().collect();
     sorted_batches.sort_by(|left, right| {
@@ -161,28 +156,11 @@ pub fn InventoryPage(
                             } else {
                                 ProductLine::PourOver
                             };
-                            let should_refresh = !form.read().batch_code_customized;
                             form.write().product_line = next_line;
-                            if should_refresh {
-                                refresh_inventory_batch_code(app_state, form);
-                            }
                         },
                         option { value: "pour_over", "手冲" }
                         option { value: "espresso", "意式" }
                     }
-                }
-                div {
-                    label { class: "field-label", "烘焙度" }
-                    select {
-                        class: "select-input",
-                        value: "{form.read().roast_level_id}",
-                        onchange: move |event| form.write().roast_level_id = event.value(),
-                        option { value: "", "未指定" }
-                        for level in state.coffee_parameters.roast_levels.iter().filter(|item| !item.archived) {
-                            option { value: "{level.id}", "{level.label}" }
-                        }
-                    }
-                    InventoryFieldError { errors, field: "roast_level_id" }
                 }
                 div {
                     label { class: "field-label", "批次编码" }
@@ -207,7 +185,7 @@ pub fn InventoryPage(
                             "↻"
                         }
                     }
-                    p { class: "section-helper", "右侧图标会按当前豆子与产品线重新生成建议编码。" }
+                    p { class: "section-helper", "右侧图标会按当前豆子、AG 匹配烘焙度与处理法重新生成建议编码。" }
                     InventoryFieldError { errors, field: "batch_code" }
                 }
                 div {
@@ -244,7 +222,13 @@ pub fn InventoryPage(
                         max: "150",
                         step: "0.1",
                         value: "{form.read().agtron_score}",
-                        oninput: move |event| form.write().agtron_score = event.value(),
+                        oninput: move |event| {
+                            let should_refresh = !form.read().batch_code_customized;
+                            form.write().agtron_score = event.value();
+                            if should_refresh {
+                                refresh_inventory_batch_code(app_state, form);
+                            }
+                        },
                     }
                     if let Some(preview) = agtron_preview.as_ref() {
                         p { class: "section-helper", "{preview}" }
@@ -273,11 +257,6 @@ pub fn InventoryPage(
                                     return;
                                 }
                             };
-                            let roast_level_id = if form_snapshot.roast_level_id.trim().is_empty() {
-                                None
-                            } else {
-                                Some(form_snapshot.roast_level_id.as_str())
-                            };
                             let notes_owned = form_snapshot.notes.trim().to_string();
                             let notes = if notes_owned.is_empty() { None } else { Some(notes_owned.as_str()) };
                             let before_state = app_state.read().clone();
@@ -287,7 +266,7 @@ pub fn InventoryPage(
                                     &mut state,
                                     &form_snapshot.bean_id,
                                     form_snapshot.product_line,
-                                    roast_level_id,
+                                    None,
                                     &form_snapshot.batch_code,
                                     &form_snapshot.roasted_at,
                                     count,
@@ -462,22 +441,28 @@ fn format_agtron_score(score: f32) -> String {
     format!("{score:.1}")
 }
 
-fn refresh_inventory_batch_code(
-    app_state: Signal<AppState>,
-    mut form: Signal<InventoryFormState>,
-) {
+fn refresh_inventory_batch_code(app_state: Signal<AppState>, mut form: Signal<InventoryFormState>) {
     let state = app_state();
     let snapshot = form.read().clone();
-    let bean_name = state
-        .beans
-        .iter()
-        .find(|bean| bean.id == snapshot.bean_id)
-        .map(|bean| bean.name.as_str())
-        .unwrap_or("");
-    if bean_name.is_empty() {
+    let selected_bean = state.beans.iter().find(|bean| bean.id == snapshot.bean_id);
+    let Some(bean) = selected_bean else {
         return;
-    }
-    let code = suggest_batch_code(bean_name, DEFAULT_ROAST_METHOD_NAME, snapshot.product_line);
+    };
+    let bean_name = bean.name.as_str();
+    let roast_level_label = parse_agtron_score_input(snapshot.agtron_score.as_str())
+        .ok()
+        .flatten()
+        .and_then(|score| match_roast_level(score, &state.coffee_parameters.roast_levels))
+        .map(|level| level.label.as_str());
+    let processing_method_label = bean.processing_method_id.as_deref().and_then(|id| {
+        state
+            .coffee_parameters
+            .processing_methods
+            .iter()
+            .find(|method| method.id == id && !method.archived)
+            .map(|method| method.label.as_str())
+    });
+    let code = suggest_inventory_batch_code(bean_name, roast_level_label, processing_method_label);
     form.write().batch_code = code;
 }
 

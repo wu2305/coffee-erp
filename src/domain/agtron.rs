@@ -7,9 +7,7 @@ pub fn parse_agtron_score_input(input: &str) -> Result<Option<f32>, &'static str
     if trimmed.is_empty() {
         return Ok(None);
     }
-    let score = trimmed
-        .parse::<f32>()
-        .map_err(|_| "请输入有效的 AG 色值")?;
+    let score = trimmed.parse::<f32>().map_err(|_| "请输入有效的 AG 色值")?;
     if !score.is_finite() || !(1.0..=150.0).contains(&score) {
         return Err("请输入 1-150 之间的 AG 色值");
     }
@@ -17,9 +15,7 @@ pub fn parse_agtron_score_input(input: &str) -> Result<Option<f32>, &'static str
 }
 
 pub fn parse_agtron_range_bounds(input: &str) -> Option<(Option<f32>, Option<f32>)> {
-    let normalized = input
-        .trim()
-        .replace([' ', '–', '—', '－', '～', '~'], "");
+    let normalized = input.trim().replace([' ', '–', '—', '－', '～', '~'], "");
     if normalized.is_empty() {
         return None;
     }
@@ -78,28 +74,34 @@ pub fn match_roast_level<'a>(
     candidates.into_iter().next().map(|(level, _, _)| level)
 }
 
-pub fn resolve_batch_roast_level_id(batch: &RoastBatch, state: &AppState) -> Option<String> {
+pub fn resolve_batch_roast_level_id<'a>(
+    batch: &'a RoastBatch,
+    state: &'a AppState,
+) -> Option<&'a str> {
     if batch.agtron_score.is_some() {
-        return batch.matched_roast_level_id.clone();
+        return batch.matched_roast_level_id.as_deref();
     }
-    if batch.roast_level_id.is_some() {
-        return batch.roast_level_id.clone();
+    if let Some(roast_level_id) = batch.roast_level_id.as_deref() {
+        return Some(roast_level_id);
     }
     state
         .roast_profiles
         .iter()
         .find(|profile| profile.id == batch.profile_id)
-        .and_then(|profile| profile.roast_level_id.clone())
+        .and_then(|profile| profile.roast_level_id.as_deref())
 }
 
-pub fn resolve_batch_roast_level_label(batch: &RoastBatch, state: &AppState) -> Option<String> {
+pub fn resolve_batch_roast_level_label<'a>(
+    batch: &'a RoastBatch,
+    state: &'a AppState,
+) -> Option<&'a str> {
     let level_id = resolve_batch_roast_level_id(batch, state)?;
     state
         .coffee_parameters
         .roast_levels
         .iter()
         .find(|level| level.id == level_id)
-        .map(|level| level.label.clone())
+        .map(|level| level.label.as_str())
 }
 
 fn agtron_in_bounds(score: f32, min: Option<f32>, max: Option<f32>) -> bool {
@@ -125,7 +127,10 @@ mod tests {
 
     #[test]
     fn parse_agtron_range_supports_closed_and_open_ranges() {
-        assert_eq!(parse_agtron_range_bounds("90-95"), Some((Some(90.0), Some(95.0))));
+        assert_eq!(
+            parse_agtron_range_bounds("90-95"),
+            Some((Some(90.0), Some(95.0)))
+        );
         assert_eq!(parse_agtron_range_bounds("95+"), Some((Some(95.0), None)));
     }
 

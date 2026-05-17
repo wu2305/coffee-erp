@@ -112,7 +112,13 @@ pub fn validate_app_state(state: &AppState) -> Result<(), Vec<ValidationError>> 
         &grinder_ids,
         &mut errors,
     );
-    validate_batches(state, &bean_ids, &roast_profile_ids, &roast_level_ids, &mut errors);
+    validate_batches(
+        state,
+        &bean_ids,
+        &roast_profile_ids,
+        &roast_level_ids,
+        &mut errors,
+    );
 
     if errors.is_empty() {
         Ok(())
@@ -333,7 +339,10 @@ fn validate_batches(
         {
             errors.push(ValidationError::new(
                 format!("batches[{}].roast_level_id", batch.id),
-                format!("referenced roast_level_id {} does not exist", roast_level_id),
+                format!(
+                    "referenced roast_level_id {} does not exist",
+                    roast_level_id
+                ),
             ));
         }
         if let Some(matched_roast_level_id) = batch.matched_roast_level_id.as_deref()

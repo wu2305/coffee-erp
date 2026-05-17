@@ -163,6 +163,21 @@ pub fn suggest_batch_code(bean_name: &str, method_name: &str, product_line: Prod
     format!("{bean_prefix}{method_prefix}{line_suffix}")
 }
 
+pub fn suggest_inventory_batch_code(
+    bean_name: &str,
+    roast_level_label: Option<&str>,
+    processing_method_label: Option<&str>,
+) -> String {
+    let bean_prefix = display_prefix(bean_name, 2);
+    let roast_prefix = roast_level_label
+        .map(|label| display_prefix(label, 1))
+        .unwrap_or_default();
+    let processing_suffix = processing_method_label
+        .map(|label| display_prefix(label, 2))
+        .unwrap_or_default();
+    format!("{bean_prefix}{roast_prefix}{processing_suffix}")
+}
+
 pub fn upsert_parameter_option(
     state: &mut AppState,
     catalog: ParameterCatalog,
@@ -231,8 +246,10 @@ pub fn upsert_roast_level_option(
         errors.push(form_error("label", "未归档标签不能重复"));
     }
 
-    let agtron_min = parse_agtron_bound_input(&input.agtron_min, "agtron_min", "下界", true, &mut errors);
-    let agtron_max = parse_agtron_bound_input(&input.agtron_max, "agtron_max", "上界", false, &mut errors);
+    let agtron_min =
+        parse_agtron_bound_input(&input.agtron_min, "agtron_min", "下界", true, &mut errors);
+    let agtron_max =
+        parse_agtron_bound_input(&input.agtron_max, "agtron_max", "上界", false, &mut errors);
 
     if let (Some(min), Some(max)) = (agtron_min, agtron_max)
         && min > max
@@ -248,7 +265,10 @@ pub fn upsert_roast_level_option(
             input.editing_id.as_deref(),
         )
     {
-        errors.push(form_error("agtron_max", "该 Agtron 范围已存在，请调整上下界"));
+        errors.push(form_error(
+            "agtron_max",
+            "该 Agtron 范围已存在，请调整上下界",
+        ));
     }
 
     if !errors.is_empty() {
@@ -432,7 +452,8 @@ pub fn upsert_roast_profile(
 
     let method_id = method_id.unwrap_or_else(|| ensure_default_roast_method(state));
     let method_name = resolve_roast_method_name(state, &method_id);
-    let display_name = build_roast_profile_display_name(&bean_name, method_name, input.product_line);
+    let display_name =
+        build_roast_profile_display_name(&bean_name, method_name, input.product_line);
 
     if let Some(editing_id) = input.editing_id.as_deref() {
         let Some(profile) = state
@@ -1170,7 +1191,12 @@ fn build_roast_profile_display_name(
     if method_name == DEFAULT_ROAST_METHOD_NAME {
         format!("{} {}", bean_name, product_line_label(product_line))
     } else {
-        format!("{} {} {}", bean_name, method_name, product_line_label(product_line))
+        format!(
+            "{} {} {}",
+            bean_name,
+            method_name,
+            product_line_label(product_line)
+        )
     }
 }
 
@@ -1192,6 +1218,32 @@ fn alnum_prefix(value: &str, length: usize) -> String {
         chars.extend(std::iter::repeat_n('X', length - chars.len()));
     }
     chars
+}
+
+fn display_prefix(value: &str, length: usize) -> String {
+    let mut chars = value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || is_cjk(*ch))
+        .map(|ch| ch.to_ascii_uppercase())
+        .take(length)
+        .collect::<String>();
+    if chars.is_empty() {
+        chars = "B".to_string();
+    }
+    chars
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{2A6DF}'
+            | '\u{2A700}'..='\u{2B73F}'
+            | '\u{2B740}'..='\u{2B81F}'
+            | '\u{2B820}'..='\u{2CEAF}'
+    )
 }
 
 fn next_entity_id<'a>(prefix: &str, ids: impl Iterator<Item = &'a str>) -> String {
@@ -1217,9 +1269,10 @@ mod tests {
         CoffeeBeanFormInput, ParameterCatalog, RoastLevelFormInput, RoastMethodFormInput,
         RoastProfileFormInput, add_matching_attribute, begin_pending_archive,
         cancel_pending_archive, commit_pending_archive, pending_archive_label,
-        remove_matching_attribute, suggest_batch_code, upsert_brewing_plan,
-        upsert_brewing_plan_category, upsert_coffee_bean, upsert_parameter_option,
-        upsert_roast_level_option, upsert_roast_method, upsert_roast_profile,
+        remove_matching_attribute, suggest_batch_code, suggest_inventory_batch_code,
+        upsert_brewing_plan, upsert_brewing_plan_category, upsert_coffee_bean,
+        upsert_parameter_option, upsert_roast_level_option, upsert_roast_method,
+        upsert_roast_profile,
     };
 
     #[test]
@@ -1232,6 +1285,18 @@ mod tests {
     fn suggest_batch_code_uses_fallback_prefix_when_name_has_no_ascii() {
         let code = suggest_batch_code("耶加雪菲", "标准曲线", ProductLine::Espresso);
         assert_eq!(code, "XXXXES");
+    }
+
+    #[test]
+    fn suggest_inventory_batch_code_uses_bean_roast_level_and_processing_method() {
+        let code = suggest_inventory_batch_code("耶加雪菲", Some("浅"), Some("水洗"));
+        assert_eq!(code, "耶加浅水洗");
+    }
+
+    #[test]
+    fn suggest_inventory_batch_code_allows_missing_roast_level_before_agtron_input() {
+        let code = suggest_inventory_batch_code("Yirgacheffe", None, Some("Washed"));
+        assert_eq!(code, "YIWA");
     }
 
     #[test]
@@ -1371,9 +1436,11 @@ mod tests {
         )
         .expect_err("duplicate roast level range should fail");
 
-        assert!(errors
-            .iter()
-            .any(|error| error.field == "agtron_max" && error.message.contains("已存在")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.field == "agtron_max" && error.message.contains("已存在"))
+        );
     }
 
     #[test]

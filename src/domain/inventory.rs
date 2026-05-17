@@ -1,7 +1,7 @@
 //! Inventory domain logic for batch creation and recommendation visibility.
 
 use crate::domain::agtron::match_roast_level;
-use crate::domain::batch_number::generate_batch_no;
+use crate::domain::batch_number::{generate_batch_no, normalize_batch_code};
 use crate::domain::models::{AppState, BatchStatus, ProductLine, RoastBatch};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +33,10 @@ pub fn create_batches(
     let mut errors = Vec::new();
 
     let bean_id = bean_id.trim();
-    let batch_code = batch_code.trim();
-    let roast_level_id = roast_level_id.map(str::trim).filter(|value| !value.is_empty());
+    let batch_code = normalize_batch_code(batch_code);
+    let roast_level_id = roast_level_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     let bean_exists = state
         .beans
@@ -82,6 +84,10 @@ pub fn create_batches(
             }
         }
     } else {
+        errors.push(BatchFormError::new(
+            "agtron_score",
+            "请填写 AG 色值以自动匹配烘焙度",
+        ));
         None
     };
 
@@ -91,19 +97,19 @@ pub fn create_batches(
 
     let date = date.expect("date validated above");
     let notes_owned = notes.map(|value| value.to_string());
-    let roast_level_id_owned = roast_level_id.map(str::to_string);
+    let roast_level_id_owned = matched_roast_level_id.clone();
     let mut created_ids = Vec::new();
 
     for _ in 0..count {
         let next_id = next_batch_id(&state.batches);
-        let batch_no = generate_batch_no(date, batch_code, &state.batches);
+        let batch_no = generate_batch_no(date, &batch_code, &state.batches);
         let batch = RoastBatch {
             id: next_id.clone(),
             profile_id: String::new(),
             bean_id: bean_id.to_string(),
             product_line: Some(product_line),
             roast_level_id: roast_level_id_owned.clone(),
-            batch_code: batch_code.to_string(),
+            batch_code: batch_code.clone(),
             roasted_at: roasted_at.to_string(),
             batch_no,
             status: BatchStatus::Active,
@@ -216,7 +222,7 @@ mod tests {
             "TEST",
             roasted_at,
             3,
-            None,
+            Some(92.0),
             None,
         )
         .expect("should succeed");
@@ -226,6 +232,14 @@ mod tests {
         assert_eq!(state.batches[0].batch_no, "20260502-TEST-001");
         assert_eq!(state.batches[1].batch_no, "20260502-TEST-002");
         assert_eq!(state.batches[2].batch_no, "20260502-TEST-003");
+        assert_eq!(
+            state.batches[0].roast_level_id,
+            Some("roast-level-light".to_string())
+        );
+        assert_eq!(
+            state.batches[0].matched_roast_level_id,
+            Some("roast-level-light".to_string())
+        );
     }
 
     #[test]
@@ -240,7 +254,7 @@ mod tests {
             "TEST",
             "2026-05-02T08:00:00+00:00",
             0,
-            None,
+            Some(92.0),
             None,
         )
         .expect_err("should reject zero count");
@@ -263,7 +277,7 @@ mod tests {
             "TEST",
             "2026-05-02T08:00:00+00:00",
             1,
-            None,
+            Some(92.0),
             None,
         )
         .expect_err("should reject invalid bean");
@@ -340,7 +354,7 @@ mod tests {
             "TEST",
             "2026-05-02T08:00:00+00:00",
             3,
-            None,
+            Some(92.0),
             None,
         )
         .expect("should succeed");
@@ -361,7 +375,7 @@ mod tests {
             "TEST",
             "2026-05-02T08:00:00+00:00",
             1,
-            None,
+            Some(92.0),
             None,
         )
         .expect("should succeed");
@@ -383,13 +397,39 @@ mod tests {
             "TEST",
             roasted_at,
             1,
-            None,
+            Some(92.0),
             None,
         )
         .expect("should accept datetime-local format");
 
         assert_eq!(ids.len(), 1);
         assert_eq!(state.batches[0].batch_no, "20260502-TEST-001");
+    }
+
+    #[test]
+    fn create_batches_requires_agtron_score_for_roast_level_matching() {
+        let mut state = valid_state_with_profile();
+
+        let errors = create_batches(
+            &mut state,
+            "bean-1",
+            ProductLine::PourOver,
+            None,
+            "TEST",
+            "2026-05-02T08:00:00+00:00",
+            1,
+            None,
+            None,
+        )
+        .expect_err("should require AG score");
+
+        assert_eq!(
+            errors,
+            vec![BatchFormError::new(
+                "agtron_score",
+                "请填写 AG 色值以自动匹配烘焙度",
+            )]
+        );
     }
 
     #[test]
